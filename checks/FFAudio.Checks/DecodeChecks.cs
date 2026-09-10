@@ -25,6 +25,11 @@ namespace FFAudio.Checks;
 //
 // A cross-compile catches none of the three: they are all green at link time
 // and all fatal at launch.
+//
+// It answers the metadata half too - tags, cover art, layout, codec names -
+// because a phone is where a caller most wants them and where the least of
+// the library has ever been run. A build that decodes perfectly and returns
+// no title is broken for anything that draws a track list.
 public static class DecodeChecks
 {
     private const int Rate = 96000;
@@ -63,6 +68,15 @@ public static class DecodeChecks
             results.Add(Run("an unseekable stream still decodes", () => UnseekableStreamDecodes(path)));
             results.Add(Run("seeking lands at or before the request", () => SeekLandsWhereItSays(path)));
             results.Add(Run("a resample delivers the frames it promises", () => ResamplingIsRight(path)));
+
+            var tagged = SyntheticTaggedAiff.CreateFile(directory, "tagged.aiff", 44100, 4410);
+
+            results.Add(Run("a file says what it was tagged with", () => TagsComeBack(tagged)));
+            results.Add(Run("cover art comes back byte for byte", () => CoverArtComesBack(tagged)));
+            results.Add(Run("an untagged file says so rather than failing", () => NoTagsIsAnAnswer(path)));
+            results.Add(Run("a file names its codec and its container", () => NamesAreRight(tagged, path)));
+            results.Add(Run("the layout describes the pcm being delivered", () => LayoutFollowsTheDownmix(tagged)));
+            results.Add(Run("the binary says which FFmpeg it is", WhichFfmpeg));
         }
         finally
         {
@@ -221,6 +235,134 @@ public static class DecodeChecks
 
         return $"{Rate}Hz to {target}Hz, {frames} frames";
     }
+
+    // Tags are read off the format context rather than the packet stream, so
+    // this is a question about the file and not a decode - but the marshalling
+    // beneath it is a two-call dance (count, then each by index) with a
+    // grow-and-retry buffer, and that is AOT-sensitive in a way a struct read
+    // is not.
+    private static string TagsComeBack(string path)
+    {
+        using var decoder = Decoder.OpenPath(path, SampleFormat.S16);
+
+        var tags = decoder.Tags;
+        Expect(tags.Count > 0, "no tags at all");
+
+        Expect(Tag(decoder, "title") == SyntheticTaggedAiff.Title,
+            $"title {Quote(Tag(decoder, "title"))}, wanted {Quote(SyntheticTaggedAiff.Title)}");
+        Expect(Tag(decoder, "artist") == SyntheticTaggedAiff.Artist,
+            $"artist {Quote(Tag(decoder, "artist"))}, wanted {Quote(SyntheticTaggedAiff.Artist)}");
+        Expect(Tag(decoder, "album") == SyntheticTaggedAiff.Album,
+            $"album {Quote(Tag(decoder, "album"))}, wanted {Quote(SyntheticTaggedAiff.Album)}");
+
+        return $"{tags.Count} tags, title {Quote(SyntheticTaggedAiff.Title)}";
+    }
+
+    // The bytes, unaltered. Cover art is the one call that hands back an
+    // arbitrary-sized buffer the caller did not size, so a length mismatch
+    // here is the marshalling and not the image.
+    private static string CoverArtComesBack(string path)
+    {
+        using var decoder = Decoder.OpenPath(path, SampleFormat.S16);
+
+        var art = decoder.TryReadCoverArt();
+        Expect(art is not null, "no cover art came back");
+        Expect(art!.MimeType == "image/png", $"mime type {Quote(art.MimeType)}, wanted image/png");
+
+        var expected = SyntheticTaggedAiff.CoverPng();
+        Expect(art.Bytes.Length == expected.Length,
+            $"{art.Bytes.Length} bytes of art, wanted {expected.Length}");
+        for (var i = 0; i < expected.Length; i++)
+        {
+            Expect(art.Bytes[i] == expected[i], $"art byte {i} differs: {art.Bytes[i]} vs {expected[i]}");
+        }
+
+        return $"{art.Bytes.Length} bytes of {art.MimeType}";
+    }
+
+    // Most music files have no embedded art and plenty have no tags, so a
+    // caller asking is not making a mistake. An empty answer rather than a
+    // throw is the difference between a library and a minefield.
+    private static string NoTagsIsAnAnswer(string path)
+    {
+        using var decoder = Decoder.OpenPath(path, SampleFormat.S24);
+
+        Expect(decoder.Tags.Count == 0, $"{decoder.Tags.Count} tags on a file that has none");
+        Expect(decoder.TryReadCoverArt() is null, "cover art on a file that has none");
+
+        return "no tags, no art, no exception";
+    }
+
+    private static string NamesAreRight(string tagged, string plain)
+    {
+        using var aiff = Decoder.OpenPath(tagged, SampleFormat.S16);
+        using var wav = Decoder.OpenPath(plain, SampleFormat.S24);
+
+        Expect(aiff.Format.Codec == "pcm_s16be", $"aiff codec {Quote(aiff.Format.Codec)}");
+        Expect(aiff.Format.Container == "aiff", $"aiff container {Quote(aiff.Format.Container)}");
+        Expect(wav.Format.Codec == "pcm_s24le", $"wav codec {Quote(wav.Format.Codec)}");
+        Expect(wav.Format.Container == "wav", $"wav container {Quote(wav.Format.Container)}");
+
+        return $"{aiff.Format.Container}/{aiff.Format.Codec} and {wav.Format.Container}/{wav.Format.Codec}";
+    }
+
+    // Delivered, not source: a caller that asked for a downmix has to be told
+    // about the channels it is going to get. `channels` is a number and a
+    // number cannot say which channel is which, which is the whole reason the
+    // layout string exists.
+    private static string LayoutFollowsTheDownmix(string path)
+    {
+        using var stereo = Decoder.OpenPath(path, SampleFormat.S16);
+        Expect(stereo.Format.Channels == 2, $"{stereo.Format.Channels} channels, wanted 2");
+        Expect(stereo.Format.ChannelLayout == "stereo", $"layout {Quote(stereo.Format.ChannelLayout)}, wanted stereo");
+
+        using var mono = Decoder.OpenPath(path, SampleFormat.S16, sampleRate: 0, channels: 1);
+        Expect(mono.Format.SourceChannels == 2, $"source channels {mono.Format.SourceChannels}, wanted 2");
+        Expect(mono.Format.Channels == 1, $"{mono.Format.Channels} channels, wanted 1");
+        Expect(mono.Format.ChannelLayout == "mono", $"layout {Quote(mono.Format.ChannelLayout)}, wanted mono");
+
+        return "stereo as read, mono as asked for";
+    }
+
+    // Which FFmpeg is actually inside this artifact, asked of the artifact
+    // rather than of the build script that made it - a configure line does
+    // not travel with a binary and avutil does. Reported rather than judged:
+    // a development build against a distro FFmpeg is GPL and that is fine
+    // here, so this fails only if the binary cannot answer at all.
+    //
+    // It needs no decoder open, which is the point of it living in FFmpegBuild
+    // rather than on Decoder, and it is worth running on a phone because a
+    // static mobile build is the one that has to be LGPL.
+    private static string WhichFfmpeg()
+    {
+        var version = FFmpegBuild.Version;
+        var license = FFmpegBuild.License;
+        var configuration = FFmpegBuild.Configuration;
+
+        Expect(version.Length > 0, "the build reports no version");
+        Expect(license.Length > 0, "the build reports no license");
+
+        // Long enough to have gone round NativeText's grow-and-retry loop,
+        // which is the only part of this that can be wrong on one platform
+        // and right on another.
+        Expect(configuration.Length > 64, $"a {configuration.Length}-character configure line is not one");
+
+        return $"{version}, {license}"
+            + (FFmpegBuild.IsRedistributable ? "" : " - a development build, not shippable");
+    }
+
+    private static string? Tag(Decoder decoder, string key)
+    {
+        foreach (var tag in decoder.Tags)
+        {
+            if (string.Equals(tag.Key, key, StringComparison.OrdinalIgnoreCase))
+                return tag.Value;
+        }
+
+        return null;
+    }
+
+    private static string Quote(string? value) => value is null ? "(absent)" : $"\"{value}\"";
 
     private static byte[] DecodeAll(Decoder decoder)
     {

@@ -106,6 +106,18 @@ jobs:
         env:
           FFAUDIO_REQUIRE_LGPL: ${{ runner.os == 'Windows' && '1' || '' }}
 
+      # The same checks again, this time from an ordinary application instead
+      # of a test host. DeviceChecksTests has already run them under xUnit a
+      # step ago, so this is not about the checks - it is about whether a
+      # console app with a project reference and a Main can use this library
+      # at all. Restore, native resolution and assembly loading all differ
+      # between an app and a test host, and "something an app does that a test
+      # does not" is the shape of both bugs this library has had on iOS.
+      #
+      # Its exit code is its tally, so nothing here has to parse the output.
+      - name: Run the checks as an app
+        run: dotnet run --project checks/FFAudio.Checks.Desktop --configuration Release
+
       # The façade this job just proved decodes, downloadable from the run.
       #
       # Nothing downstream consumes these yet: the package carries the

@@ -383,10 +383,21 @@ The same question — *does this platform turn a file into the right samples?* �
 asked on a phone rather than on a developer's Mac.
 
 ```
-dotnet test --filter FullyQualifiedName~DeviceChecksTests   # here
+dotnet run --project checks/FFAudio.Checks.Desktop          # here, as an app
+dotnet test --filter FullyQualifiedName~DeviceChecksTests   # here, under xUnit
 scripts/ios-device-checks.sh                                # iOS Simulator
 scripts/android-device-checks.sh                            # Android emulator
 ```
+
+Thirteen checks, the same thirteen everywhere: the façade loads, a 24-bit
+source arrives with every bit, each sample format is its own width, a managed
+stream matches the path, an unseekable one still decodes, a seek lands at or
+before the request, a resample delivers the frames it promised, a tagged file
+reports its title, artist, album and cover art byte for byte, an untagged one
+says so without throwing, a file names its codec and container, the layout
+follows the downmix, and the binary says which FFmpeg is inside it. That is
+the whole public surface — decode, metadata, identity — exercised end to end
+on every platform this library claims.
 
 Three things this library depends on are green at link time and fatal at
 launch, and not one of them can fail on a desktop:
@@ -423,10 +434,23 @@ the whole system, so a chatty emulator drops lines out of the middle of a long
 one. A run that decoded everything and reported two thirds of its tally is
 indistinguishable from a failing one.
 
-The checks also run on every desktop, as `DeviceChecksTests`. A check that is
-only ever exercised on a phone is one nobody can trust, because a failure
-there would be ambiguous between the platform and the check itself — running
-them here first means a red simulator run says something about the simulator.
+The checks also run on every desktop, twice. Once as `DeviceChecksTests`,
+because a check that is only ever exercised on a phone is one nobody can
+trust — a failure there would be ambiguous between the platform and the check
+itself, and running them here first means a red simulator run says something
+about the simulator. And once as `checks/FFAudio.Checks.Desktop`, a console
+app whose exit code is its tally, which is the third head rather than a second
+test: restore, native resolution and assembly loading all differ between an
+app and a test host, and *something an app does that a test does not* is the
+shape of both bugs this library has had on iOS. Five heads, one `RunAll`.
+
+The metadata checks need a file that actually has metadata, and a phone has no
+encoder to make one — nor does the Linux CI job, which installs
+`libavformat-dev` and no `ffmpeg` binary at all. So `SyntheticTaggedAiff`
+builds one by hand: AIFF, whose audio is raw big-endian PCM, carrying a
+hand-written ID3v2.3 tag in an `ID3 ` chunk that libavformat's `aiffdec` reads
+with the same parser it uses on an MP3. Same metadata dictionary, same
+`ATTACHED_PIC` stream, no encoder anywhere.
 
 Which ABI an Android run exercises is a property of the host: `arm64-v8a` on a
 developer's Mac, `x86_64` on a CI runner. Both `.so`s are packaged, along with

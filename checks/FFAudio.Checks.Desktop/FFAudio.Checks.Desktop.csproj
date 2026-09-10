@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The same checks the phones run, on whichever desktop is running it.
+       macOS, Linux and Windows in one project, because on a desktop "the
+       platform" is a runtime concern and not a build one - there is nothing
+       here for a target framework to differ about.
+
+       It overlaps FFAudio.Tests deliberately: DeviceChecksTests already runs
+       RunAll under xUnit on all three. What that cannot answer is whether an
+       ordinary application - a console app with a PackageReference and a
+       Main - can use this library, because a test host restores, resolves and
+       loads differently from an app. Something an app does and a test does
+       not is exactly the class of thing that has bitten this library twice on
+       iOS. -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+    <RootNamespace>FFAudio.Checks.Desktop</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../FFAudio.Checks/FFAudio.Checks.csproj" />
+  </ItemGroup>
+
+</Project>

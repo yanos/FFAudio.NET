@@ -4,7 +4,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Text;
 
-namespace FFAudio.Tests;
+namespace FFAudio.Checks;
 
 // A small AIFF carrying an ID3v2 tag, which is to say: a real file with real
 // metadata, built without an encoder.
@@ -24,6 +24,10 @@ namespace FFAudio.Tests;
 // the façade's reading of those, not FFmpeg's parsing of them, so a fixture
 // that reaches the same structures by a simpler road is worth more than a
 // realistic one nobody can build everywhere.
+//
+// It lives beside the checks rather than in the test project because a phone
+// needs it too: the metadata checks run there, and "no encoder anywhere" is
+// even truer on a device than it is in CI.
 public static class SyntheticTaggedAiff
 {
     public const string Title = "A quiet ramp";

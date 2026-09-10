@@ -14,5 +14,6 @@
   </Folder>
   <Folder Name="/checks/">
     <Project Path="checks/FFAudio.Checks/FFAudio.Checks.csproj" />
+    <Project Path="checks/FFAudio.Checks.Desktop/FFAudio.Checks.Desktop.csproj" />
   </Folder>
 </Solution>
