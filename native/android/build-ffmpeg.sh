@@ -8,6 +8,10 @@
 # this configure line is what makes the result distributable. No --enable-gpl
 # and no --enable-nonfree, ever; see ../README.md.
 #
+# What it may decode is ../codec-set.sh's, shared with the iOS build rather
+# than restated here: what a phone can play should not depend on which phone.
+# FFAUDIO_VARIANT picks between the music-library `slim` set and a `full` one.
+#
 # Slow - tens of minutes across three ABIs - and idempotent: a prefix that
 # already has a libavformat.a is left alone unless FFAUDIO_REBUILD_FFMPEG is set.
 set -euo pipefail
@@ -22,13 +26,6 @@ version="${FFAUDIO_FFMPEG_VERSION:-7.1.1}"
 # API level exactly: two native libraries in one APK disagreeing about their
 # floor is a difference with no upside and a confusing failure mode.
 api=21
-
-# The same list ios/build-ffmpeg.sh builds, and deliberately the same: what a
-# phone can play should not depend on which phone. Anything not named here does
-# not decode on Android.
-decoders="mp3,mp3float,aac,aac_latm,alac,flac,vorbis,opus,wavpack,ape,pcm_s16le,pcm_s16be,pcm_s24le,pcm_s24be,pcm_s32le,pcm_u8,pcm_f32le,pcm_f64le"
-demuxers="mov,mp3,flac,wav,w64,ogg,matroska,aac,ape,wv,aiff,dsf"
-parsers="mpegaudio,aac,aac_latm,flac,vorbis,opus"
 
 case "$(uname -s)" in
     Darwin) host_tag=darwin-x86_64 ;;
@@ -47,6 +44,17 @@ if [ ! -d "$work/ffmpeg-$version" ]; then
     tar -xf "$work/ffmpeg-$version.tar.xz" -C "$work"
 fi
 
+# The decoder and demuxer set, and which variant of it this build gets.
+# FFAUDIO_VARIANT=full asks for every audio decoder FFmpeg has instead of the
+# music-library list; see ../codec-set.sh, which is also the reason this list
+# is no longer written out twice, once here and once for the other phone.
+# The flags are rendered before anything is configured so a variant that does
+# not exist fails now rather than three slices in.
+source "$here/../codec-set.sh"
+components=()
+while IFS= read -r flag; do components+=("$flag"); done \
+    < <(ffaudio_component_flags "$work/ffmpeg-$version")
+
 build_abi() {
     local abi="$1"      # arm64-v8a | armeabi-v7a | x86_64
     local arch="$2"     # FFmpeg's name for it
@@ -54,7 +62,7 @@ build_abi() {
     shift 3
     local extra=("$@")
 
-    local prefix="$work/prefix/$abi"
+    local prefix="$work/prefix/$ffaudio_variant/$abi"
     if [ -f "$prefix/lib/libavformat.a" ] && [ -z "${FFAUDIO_REBUILD_FFMPEG:-}" ]; then
         echo "=== $abi already built ($prefix) - set FFAUDIO_REBUILD_FFMPEG=1 to redo ==="
         return
@@ -64,7 +72,7 @@ build_abi() {
     rm -rf "$build" "$prefix"
     mkdir -p "$build"
 
-    echo "=== Configuring FFmpeg for $abi ==="
+    echo "=== Configuring $ffaudio_variant FFmpeg for $abi ==="
     # The NDK is one clang steered by target triple, so --cross-prefix names
     # only the llvm-* binutils; the compiler is picked by name instead. Note
     # --disable-network for the reason ios/build-ffmpeg.sh gives: a caller never
@@ -88,12 +96,9 @@ build_abi() {
             --disable-programs --disable-doc --disable-debug \
             --disable-avdevice --disable-avfilter --disable-swscale --disable-postproc \
             --disable-network --disable-iconv --disable-sdl2 \
-            --disable-everything \
-            --enable-decoder="$decoders" \
-            --enable-demuxer="$demuxers" \
-            --enable-parser="$parsers" \
-            --enable-protocol=file \
+            "${components[@]}" \
             "${extra[@]}"
+        ffaudio_assert_lgpl "$build"
         make -j"$(getconf _NPROCESSORS_ONLN)"
         make install
     )

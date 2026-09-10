@@ -25,6 +25,8 @@
 #     native/build-all.sh                        # everything this host can do
 #     native/build-all.sh macos ios              # just these
 #     FFAUDIO_REBUILD_FFMPEG=1 native/build-all.sh   # rebuild the mobile FFmpeg too
+#     FFAUDIO_VARIANT=full native/build-all.sh ios    # every audio decoder, not the
+#                                                    # music-library list
 #
 # The mobile targets each cross-compile FFmpeg itself first (build-ffmpeg.sh),
 # which is tens of minutes the first time. Both of those are idempotent - an

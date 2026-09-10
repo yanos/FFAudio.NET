@@ -12,8 +12,10 @@
 # It builds a named set of decoders and demuxers rather than all of them:
 # --disable-everything and an explicit list. That is mostly about size, since
 # the result is linked into an app bundle, but it is also the honest statement
-# of what the phone can play. The list is the `slim` set - see ../../README.md
-# for what is in it and what a `full` build would add.
+# of what the phone can play. The list lives in ../codec-set.sh, shared with
+# the Android build and with whatever comes after it, and FFAUDIO_VARIANT picks
+# between the music-library `slim` set and a `full` one that decodes every
+# audio format FFmpeg has.
 #
 # Slow - tens of minutes for both slices - and idempotent: an existing prefix
 # with a libavformat.a in it is left alone unless FFAUDIO_REBUILD_FFMPEG is set.
@@ -24,13 +26,6 @@ work="$here/ffmpeg"
 version="${FFAUDIO_FFMPEG_VERSION:-7.1.1}"
 deployment_target=12.2
 
-# What a music library is made of, plus the containers a server might hand over
-# on a stream. Anything not listed here does not decode on a phone - which is
-# the point of listing it rather than a limitation to be sorry about.
-decoders="mp3,mp3float,aac,aac_latm,alac,flac,vorbis,opus,wavpack,ape,pcm_s16le,pcm_s16be,pcm_s24le,pcm_s24be,pcm_s32le,pcm_u8,pcm_f32le,pcm_f64le"
-demuxers="mov,mp3,flac,wav,w64,ogg,matroska,aac,ape,wv,aiff,dsf"
-parsers="mpegaudio,aac,aac_latm,flac,vorbis,opus"
-
 mkdir -p "$work"
 
 if [ ! -d "$work/ffmpeg-$version" ]; then
@@ -39,12 +34,23 @@ if [ ! -d "$work/ffmpeg-$version" ]; then
     tar -xf "$work/ffmpeg-$version.tar.xz" -C "$work"
 fi
 
+# The decoder and demuxer set, and which variant of it this build gets.
+# FFAUDIO_VARIANT=full asks for every audio decoder FFmpeg has instead of the
+# music-library list; see ../codec-set.sh, which is also the reason this list
+# is no longer written out twice, once here and once for the other phone.
+# The flags are rendered before anything is configured so a variant that does
+# not exist fails now rather than three slices in.
+source "$here/../codec-set.sh"
+components=()
+while IFS= read -r flag; do components+=("$flag"); done \
+    < <(ffaudio_component_flags "$work/ffmpeg-$version")
+
 build_slice() {
     local sdk="$1"    # iphoneos | iphonesimulator
     local triple="$2" # arm64-apple-ios12.2 [-simulator]
     local slice="$3"  # ios-device | ios-simulator
 
-    local prefix="$work/prefix/$slice"
+    local prefix="$work/prefix/$ffaudio_variant/$slice"
     if [ -f "$prefix/lib/libavformat.a" ] && [ -z "${FFAUDIO_REBUILD_FFMPEG:-}" ]; then
         echo "=== $slice already built ($prefix) - set FFAUDIO_REBUILD_FFMPEG=1 to redo ==="
         return
@@ -57,7 +63,7 @@ build_slice() {
     rm -rf "$build" "$prefix"
     mkdir -p "$build"
 
-    echo "=== Configuring FFmpeg for $triple ($sdk) ==="
+    echo "=== Configuring $ffaudio_variant FFmpeg for $triple ($sdk) ==="
     # --enable-cross-compile with the host's own clang, steered entirely by
     # -target and -isysroot: the Apple toolchain is one compiler that
     # cross-compiles by flag, so there is no separate cross prefix to name.
@@ -84,11 +90,8 @@ build_slice() {
             --disable-programs --disable-doc --disable-debug \
             --disable-avdevice --disable-avfilter --disable-swscale --disable-postproc \
             --disable-network --disable-iconv --disable-sdl2 --disable-audiotoolbox \
-            --disable-everything \
-            --enable-decoder="$decoders" \
-            --enable-demuxer="$demuxers" \
-            --enable-parser="$parsers" \
-            --enable-protocol=file
+            "${components[@]}"
+        ffaudio_assert_lgpl "$build"
         make -j"$(sysctl -n hw.ncpu)"
         make install
     )

@@ -158,6 +158,49 @@ tests run against whatever was last built, with nothing to copy. Or point
 `FFAUDIO_LIBRARY` at a file to override it entirely, which is how to bisect
 against a differently-built FFmpeg without a rebuild.
 
+### What it can decode: `slim` and `full`
+
+The phone builds are `--disable-everything` plus an explicit list, because a
+static FFmpeg is linked into the app bundle and all of FFmpeg is 70MB of
+avcodec for a façade that calls four functions. That list is in
+`native/codec-set.sh`, and there are two of them:
+
+| `FFAUDIO_VARIANT` | What it decodes | Size |
+|---|---|---|
+| `slim` (default) | A music library: MP3, AAC/ALAC, FLAC, Vorbis, Opus, WavPack, APE, DSD, the PCM family — 22 decoders, 12 demuxers | iOS slice ~1.9MB, Android ABI ~1.3MB |
+| `full` | Every audio decoder FFmpeg has and every demuxer it has — 201 decoders, 350 demuxers | Untested; expect several times that |
+
+```
+FFAUDIO_VARIANT=full native/ios/build-ffmpeg.sh && FFAUDIO_VARIANT=full native/ios/build.sh
+```
+
+`full` is deliberately not "drop `--disable-everything`": that enables the
+whole video decoder set for a façade that hands back PCM and cannot express a
+frame. It is the audio half of FFmpeg's own decoder list, read out of the
+source tree about to be configured — `libavcodec/allcodecs.c` groups its
+declarations under `/* audio codecs */`, `/* PCM codecs */`, `/* DPCM codecs
+*/` and `/* ADPCM codecs */`, and everything between those and `/* subtitles
+*/` is what produces samples. If a future FFmpeg drops those markers the build
+fails with an empty list rather than quietly configuring no decoders at all.
+Demuxers are all of them: a demuxer is a table and a probe function, and the
+file a caller hands over is theirs to name rather than ours to predict.
+configure warns that it dropped the handful needing network or an external
+library, which is the intended outcome.
+
+This is a property of the *static* builds only. macOS and Linux link the
+system FFmpeg through `pkg-config` and decode whatever that build decodes;
+Windows decodes whatever the pinned download has.
+
+Both variants keep the prefix `build-ffmpeg.sh` produced, under
+`ffmpeg/prefix/<variant>/`, so switching between them is a relink rather than
+another forty minutes. They build to the same artifact path under the same
+name, so the artifact tree carries a `VARIANT` file saying which one is in it.
+
+Neither can introduce a licence problem — every name in the lists is a decoder
+or a demuxer rather than a configure switch — and the build asserts it anyway:
+`ffaudio_assert_lgpl` reads the generated `config.h` after configure and stops
+if `CONFIG_GPL` or `CONFIG_NONFREE` came back set. See **Licensing**.
+
 ### macOS and Linux
 
 ```
@@ -462,6 +505,14 @@ test.
 | Windows | `ffaudio.dll` | Built on CI against a pinned LGPL download; never listened to on Windows |
 | iOS | `ffaudio.framework` per slice | Built; decode checks pass on the simulator and on a physical device |
 | Android | `libffaudio.so` per ABI | Built for all three ABIs; decode checks pass on an emulator |
+
+`full` has never been built for a phone: its configure line was verified by
+configuring FFmpeg 7.1.1 with it on macOS — 201 audio decoders, 350 demuxers,
+`CONFIG_GPL 0` — and no slice or ABI has been linked from it. The DSD
+decoders new to `slim` are in the same position: `dsf` had been in the demuxer
+list with no `dsd_*` decoder behind it since the list was written, so a `.dsf`
+demuxed and then failed to find a decoder, and the fix is a configure line
+that no phone has yet run.
 
 The metadata surface — tags, cover art, channel layout, codec and container
 names — is built and tested on macOS only so far. It is plain `avformat`

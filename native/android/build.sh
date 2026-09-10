@@ -18,7 +18,11 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 native="$(cd "$here/.." && pwd)"
 root="$(cd "$here/../.." && pwd)"
 build="$here/build"
-prefixes="$here/ffmpeg/prefix"
+# Which FFmpeg gets linked in is FFAUDIO_VARIANT's answer, not this script's:
+# build-ffmpeg.sh keeps a prefix per variant, so switching between them is a
+# relink rather than another forty minutes.
+source "$native/codec-set.sh"
+prefixes="$here/ffmpeg/prefix/$ffaudio_variant"
 api=21
 
 # Must match Native.Library, which is the literal DllImport string. Named
@@ -35,7 +39,7 @@ esac
 toolchain="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/$host_tag/bin"
 
 if [ ! -f "$prefixes/arm64-v8a/lib/libavformat.a" ]; then
-    echo "No FFmpeg for Android yet - run $here/build-ffmpeg.sh first." >&2
+    echo "No $ffaudio_variant FFmpeg for Android yet - run $here/build-ffmpeg.sh first." >&2
     exit 1
 fi
 
@@ -104,4 +108,8 @@ build_abi arm64-v8a   aarch64-linux-android
 build_abi armeabi-v7a armv7a-linux-androideabi
 build_abi x86_64      x86_64-linux-android
 
-echo "Done. Built ABIs: arm64-v8a armeabi-v7a x86_64"
+# What is in this tree is not visible from the binaries: two variants build to
+# the same paths under the same name, so the tree says which one it holds.
+echo "$ffaudio_variant" > "$root/native/artifacts/android/VARIANT"
+
+echo "Done ($ffaudio_variant). Built ABIs: arm64-v8a armeabi-v7a x86_64"

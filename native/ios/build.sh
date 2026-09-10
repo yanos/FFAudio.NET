@@ -23,14 +23,18 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 native="$(cd "$here/.." && pwd)"
 root="$(cd "$here/../.." && pwd)"
 build="$here/build"
-prefixes="$here/ffmpeg/prefix"
+# Which FFmpeg gets linked in is FFAUDIO_VARIANT's answer, not this script's:
+# build-ffmpeg.sh keeps a prefix per variant, so switching between them is a
+# relink rather than another forty minutes.
+source "$native/codec-set.sh"
+prefixes="$here/ffmpeg/prefix/$ffaudio_variant"
 deployment_target=12.2
 
 # Must match Native.Library, which is the literal DllImport string.
 framework=ffaudio
 
 if [ ! -f "$prefixes/ios-device/lib/libavformat.a" ]; then
-    echo "No FFmpeg for iOS yet - run $here/build-ffmpeg.sh first." >&2
+    echo "No $ffaudio_variant FFmpeg for iOS yet - run $here/build-ffmpeg.sh first." >&2
     exit 1
 fi
 
@@ -129,5 +133,9 @@ mkdir -p "$frameworks/ios-device" "$frameworks/ios-simulator"
 cp -R "$build/ios-device/$framework.framework" "$frameworks/ios-device/"
 cp -R "$build/ios-simulator/$framework.framework" "$frameworks/ios-simulator/"
 
-echo "Done. -> $frameworks/ios-device/$framework.framework"
+# What is in this tree is not visible from the binary: two variants build to
+# the same path and the same name, so the tree says which one it is holding.
+echo "$ffaudio_variant" > "$frameworks/VARIANT"
+
+echo "Done ($ffaudio_variant). -> $frameworks/ios-device/$framework.framework"
 echo "     -> $frameworks/ios-simulator/$framework.framework"
