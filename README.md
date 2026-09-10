@@ -129,11 +129,37 @@ ABI 1.3MB, and nobody should pay for both.
 | Package | Holds |
 |---|---|
 | `FFAudio.NET` | the managed binding — this is the one you reference |
-| `FFAudio.NET.Windows` / `.Linux` / `.macOS` | `runtimes/<rid>/native/` payloads |
-| `FFAudio.NET.iOS` / `.Android` | targets injecting `NativeReference` / `AndroidNativeLibrary` |
+| `FFAudio.NET.macOS` | `runtimes/osx-arm64/native/libffaudio.dylib` |
+| `FFAudio.NET.Linux` | `runtimes/linux-x64/native/libffaudio.so` |
+| `FFAudio.NET.Windows` | `runtimes/win-x64/native/` — the façade plus the four FFmpeg DLLs it imports |
+| `FFAudio.NET.iOS` | both `ffaudio.framework` slices, and a `.targets` injecting `NativeReference` |
+| `FFAudio.NET.Android` | `libffaudio.so` for three ABIs, and a `.targets` injecting `AndroidNativeLibrary` |
 
-Neither mobile head resolves a native out of `runtimes/`, which is why those
-two are targets rather than payloads.
+Reference the binding plus whichever payload the app actually ships:
+
+```
+dotnet add package FFAudio.NET
+dotnet add package FFAudio.NET.macOS
+```
+
+Nothing depends on anything else here. The binding does not drag a native in,
+because which native an app wants is the app's decision — a Windows FFmpeg is
+~70MB where an iOS slice is 1.9MB, and a consumer building their own FFmpeg
+wants neither.
+
+Desktop is a plain `runtimes/<rid>/native/` payload, which the SDK resolves for
+the running RID with no help from us. Neither mobile head does that, so those
+two are `buildTransitive/` targets instead: an iOS framework is a directory and
+has to arrive as a `NativeReference`, and an Android `.so` reaches an APK as an
+`AndroidNativeLibrary` with an `<Abi>`. `buildTransitive` rather than `build` so
+the injection survives a project reference, which is the normal arrangement —
+the app references its own shared library, and that is what took the
+dependency.
+
+One RID per desktop package, and each is the one the CI runner that built it
+actually is: `osx-arm64`, `linux-x64`, `win-x64`. An Intel Mac or an arm64
+Linux box needs a build that nothing here has a machine to make, so those RIDs
+are absent rather than claimed.
 
 ## Building the natives
 
@@ -559,8 +585,17 @@ names — now runs green on all three desktops and on both phone simulators,
 which it had not when it was written: run 34436202607 is the first time it was
 built anywhere but macOS.
 
+The per-platform native packages now exist and CI packs all six, out of the
+natives the test and checks jobs built rather than a rebuild — the same
+argument the publish job makes for pushing pack's exact bytes. A payload
+package that packs nothing is the failure this invites, so each one names a
+file that must exist and stops the build if it does not.
+
+Verified end to end for macOS only: a scratch console app referencing
+`FFAudio.NET` and `FFAudio.NET.macOS` from a folder feed decodes a FLAC with
+no other setup. The mobile two have been packed and their layout checked, but
+no phone project has consumed one — that is the first thing to do with them.
+
 Nothing is published to NuGet yet: the workflow and the versioning are in
 place, but no `v*` tag has been cut and no `NUGET_API_KEY` secret has been
-set. The per-platform native packages described under **Packaging** are not
-built by CI either — the mobile ones need a cross-compiled FFmpeg that takes
-tens of minutes, and the decision about where that runs has not been made.
+set.

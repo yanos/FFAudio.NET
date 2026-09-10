@@ -296,13 +296,54 @@ jobs:
             echo "$version is a pre-release ($prerelease)" >> "$GITHUB_STEP_SUMMARY"
           fi
 
-      - name: Pack
-        run: dotnet pack src/FFAudio.NET/FFAudio.NET.csproj --configuration Release -p:ContinuousIntegrationBuild=true --output artifacts/nupkg
+      # The natives this run built, back out of the jobs that built them and
+      # into the tree at the paths the packaging projects expect. Nothing is
+      # rebuilt here: the binaries that go into a package are the ones the
+      # test and checks jobs actually exercised, which is the same argument
+      # the publish job makes for pushing pack's exact bytes.
+      #
+      # No `continue-on-error` and no glob: a payload package that packs
+      # nothing is the failure mode this whole phase invites, so a missing
+      # download must stop the run. EnsurePayloadExists catches it a second
+      # time if a download silently produced an empty directory.
+      - name: Collect the natives
+        uses: actions/download-artifact@v4
+        with:
+          pattern: ffaudio-*
+          path: artifacts/natives
 
-      # What went into the package, in the log, so a build's version and
-      # dependencies are readable without downloading anything.
-      - name: Show the generated nuspec
-        run: unzip -p artifacts/nupkg/*.nupkg '*.nuspec'
+      # download-artifact with a pattern nests each artifact under its own
+      # name, which is not where the packaging projects look. The desktop
+      # three each carry a platform folder of their own; the mobile two were
+      # uploaded as the contents of one.
+      - name: Lay the natives out
+        run: |
+          set -euo pipefail
+          mkdir -p native/artifacts
+          for os in Linux macOS Windows; do
+            cp -R artifacts/natives/ffaudio-$os/. native/artifacts/
+          done
+          mkdir -p native/artifacts/ios native/artifacts/android
+          cp -R artifacts/natives/ffaudio-iOS/. native/artifacts/ios/
+          cp -R artifacts/natives/ffaudio-Android/. native/artifacts/android/
+          find native/artifacts -maxdepth 2 -type d
+
+      - name: Pack
+        run: |
+          dotnet pack src/FFAudio.NET/FFAudio.NET.csproj --configuration Release -p:ContinuousIntegrationBuild=true --output artifacts/nupkg
+          for project in packaging/*/*.csproj; do
+            dotnet pack "$project" --configuration Release -p:ContinuousIntegrationBuild=true --output artifacts/nupkg
+          done
+
+      # What went into the packages, in the log, so a build's version and
+      # dependencies are readable without downloading anything - and, for the
+      # payload packages, that they are not empty.
+      - name: Show what was packed
+        run: |
+          for package in artifacts/nupkg/*.nupkg; do
+            echo "=== $package ==="
+            unzip -l "$package"
+          done
 
       - uses: actions/upload-artifact@v4
         with:

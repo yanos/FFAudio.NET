@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <PackageId>FFAudio.NET.Windows</PackageId>
+    <Description>The Windows native decoder for FFAudio.NET (x64), including the LGPL FFmpeg DLLs it imports.</Description>
+    <PayloadProbe>$(MSBuildThisFileDirectory)../../native/artifacts/windows/ffaudio.dll</PayloadProbe>
+  </PropertyGroup>
+
+  <!-- Five DLLs rather than one, and by far the largest of these packages:
+       Windows has no system FFmpeg to link against, so native/windows/build.ps1
+       downloads a pinned LGPL build and ffaudio.dll imports avformat, avcodec,
+       avutil and swresample from beside it. They are dynamically linked and
+       replaceable, which is the LGPL route this platform takes.
+
+       A glob rather than four names, because the DLL filenames carry FFmpeg's
+       soversion - avcodec-62.dll today - and pinning those here would be a
+       second place to bump on every FFmpeg update. -->
+  <ItemGroup>
+    <None Include="../../native/artifacts/windows/*.dll"
+          Pack="true" PackagePath="runtimes/win-x64/native/" />
+  </ItemGroup>
+
+</Project>

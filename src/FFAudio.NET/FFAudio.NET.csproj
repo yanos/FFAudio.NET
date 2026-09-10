@@ -13,7 +13,7 @@
 
   <PropertyGroup>
     <PackageId>FFAudio.NET</PackageId>
-    <Description>A narrow, audio-only façade over FFmpeg's decode libraries: open a file or a Stream, ask what PCM it holds, read interleaved samples, seek, close. Eight functions, four sample formats (S16, packed S24, S32, F32), and static natives for iOS and Android as well as the desktops.</Description>
+    <Description>A narrow, audio-only façade over FFmpeg's decode libraries: open a file or a Stream, ask what PCM it holds, read interleaved samples, seek, close. Sixteen functions, four sample formats (S16, packed S24, S32, F32), and static natives for iOS and Android as well as the desktops.</Description>
     <PackageTags>ffmpeg;audio;decode;pcm;decoder;flac;alac;mp3;aac;opus</PackageTags>
     <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
     <PackageReadmeFile>README.md</PackageReadmeFile>

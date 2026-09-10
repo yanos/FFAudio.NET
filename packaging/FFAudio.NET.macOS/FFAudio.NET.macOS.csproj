@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <PackageId>FFAudio.NET.macOS</PackageId>
+    <Description>The macOS native decoder for FFAudio.NET (arm64). Reference this alongside FFAudio.NET to ship a decoder with a macOS app.</Description>
+    <PayloadProbe>$(MSBuildThisFileDirectory)../../native/artifacts/macos/libffaudio.dylib</PayloadProbe>
+  </PropertyGroup>
+
+  <!-- osx-arm64 only, which is what native/macos/build.sh produces unless
+       FFAUDIO_ARCHS asks for more. An Intel Mac needs a second build and a
+       second RID folder; there is no runner and no machine here to make one
+       from, so claiming osx-x64 would be claiming something untested. -->
+  <ItemGroup>
+    <None Include="../../native/artifacts/macos/libffaudio.dylib"
+          Pack="true" PackagePath="runtimes/osx-arm64/native/" />
+  </ItemGroup>
+
+</Project>

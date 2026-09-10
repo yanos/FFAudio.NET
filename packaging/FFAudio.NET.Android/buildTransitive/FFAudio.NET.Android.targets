@@ -1,0 +1,29 @@
+<Project>
+
+  <!-- Android does not resolve a native out of runtimes/<rid>/native/ either:
+       an .so reaches an APK as an <AndroidNativeLibrary> with an <Abi>, and
+       which ABIs are packaged is the app's decision rather than the package's.
+       So all three are declared and the Android SDK drops the ones outside
+       $(AndroidSupportedAbis).
+
+       Which ABI actually runs is a property of the hardware - arm64-v8a on a
+       phone, x86_64 on most emulators, armeabi-v7a on something older - which
+       is why shipping one is not an option. -->
+
+  <PropertyGroup>
+    <FFAudioAndroidLibs>$(MSBuildThisFileDirectory)../../native/android</FFAudioAndroidLibs>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <AndroidNativeLibrary Include="$(FFAudioAndroidLibs)/arm64-v8a/libffaudio.so">
+      <Abi>arm64-v8a</Abi>
+    </AndroidNativeLibrary>
+    <AndroidNativeLibrary Include="$(FFAudioAndroidLibs)/x86_64/libffaudio.so">
+      <Abi>x86_64</Abi>
+    </AndroidNativeLibrary>
+    <AndroidNativeLibrary Include="$(FFAudioAndroidLibs)/armeabi-v7a/libffaudio.so">
+      <Abi>armeabi-v7a</Abi>
+    </AndroidNativeLibrary>
+  </ItemGroup>
+
+</Project>

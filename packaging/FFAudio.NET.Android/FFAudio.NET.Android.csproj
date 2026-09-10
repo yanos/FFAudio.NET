@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <PackageId>FFAudio.NET.Android</PackageId>
+    <Description>The Android native decoder for FFAudio.NET: libffaudio.so for arm64-v8a, x86_64 and armeabi-v7a, with FFmpeg linked in statically under the LGPL.</Description>
+    <PayloadProbe>$(MSBuildThisFileDirectory)../../native/artifacts/android/arm64-v8a/libffaudio.so</PayloadProbe>
+  </PropertyGroup>
+
+  <!-- android21.0 is what the .so files were compiled against, and NuGet
+       refuses a build folder with no platform version at all. A project with a
+       higher minSdk consumes it. -->
+  <ItemGroup>
+    <None Include="buildTransitive/FFAudio.NET.Android.targets"
+          Pack="true" PackagePath="buildTransitive/net10.0-android21.0/" />
+    <None Include="../../native/artifacts/android/**/*.so"
+          Pack="true" PackagePath="native/android/" />
+  </ItemGroup>
+
+</Project>

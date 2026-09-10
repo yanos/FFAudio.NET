@@ -5,6 +5,13 @@
   <Folder Name="/tests/">
     <Project Path="tests/FFAudio.Tests/FFAudio.Tests.csproj" />
   </Folder>
+  <Folder Name="/packaging/">
+    <Project Path="packaging/FFAudio.NET.macOS/FFAudio.NET.macOS.csproj" />
+    <Project Path="packaging/FFAudio.NET.Linux/FFAudio.NET.Linux.csproj" />
+    <Project Path="packaging/FFAudio.NET.Windows/FFAudio.NET.Windows.csproj" />
+    <Project Path="packaging/FFAudio.NET.iOS/FFAudio.NET.iOS.csproj" />
+    <Project Path="packaging/FFAudio.NET.Android/FFAudio.NET.Android.csproj" />
+  </Folder>
   <Folder Name="/checks/">
     <Project Path="checks/FFAudio.Checks/FFAudio.Checks.csproj" />
   </Folder>

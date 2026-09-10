@@ -1,0 +1,35 @@
+<Project>
+
+  <!-- .NET for iOS does not resolve a native out of runtimes/<rid>/native/ the
+       way a desktop app does, and a framework is a directory rather than a
+       file, so there is nothing a payload layout could express. It has to be a
+       <NativeReference>, which is a thing only the consuming project can
+       declare - hence this file, injected into every project that references
+       the package.
+
+       Two slices, and they are not interchangeable: a simulator binary will
+       not load on a device, and the reverse is worse because it links and then
+       fails at runtime. RuntimeIdentifier is what tells them apart, and it is
+       always set on an iOS build.
+
+       $(MSBuildThisFileDirectory) is buildTransitive/<tfm>/ inside the
+       extracted package, so the frameworks sit two levels up under
+       native/ - see the .csproj that packs them. -->
+
+  <PropertyGroup>
+    <FFAudioFrameworks>$(MSBuildThisFileDirectory)../../native/ios</FFAudioFrameworks>
+  </PropertyGroup>
+
+  <ItemGroup Condition="$(RuntimeIdentifier.StartsWith('iossimulator'))">
+    <NativeReference Include="$(FFAudioFrameworks)/ios-simulator/ffaudio.framework">
+      <Kind>Framework</Kind>
+    </NativeReference>
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(RuntimeIdentifier)' != '' And !$(RuntimeIdentifier.StartsWith('iossimulator'))">
+    <NativeReference Include="$(FFAudioFrameworks)/ios-device/ffaudio.framework">
+      <Kind>Framework</Kind>
+    </NativeReference>
+  </ItemGroup>
+
+</Project>
