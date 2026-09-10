@@ -460,15 +460,13 @@ scripts/ios-device-checks.sh                                # iOS Simulator
 scripts/android-device-checks.sh                            # Android emulator
 ```
 
-Thirteen checks, the same thirteen everywhere: the façade loads, a 24-bit
-source arrives with every bit, each sample format is its own width, a managed
-stream matches the path, an unseekable one still decodes, a seek lands at or
-before the request, a resample delivers the frames it promised, a tagged file
-reports its title, artist, album and cover art byte for byte, an untagged one
-says so without throwing, a file names its codec and container, the layout
-follows the downmix, and the binary says which FFmpeg is inside it. That is
-the whole public surface — decode, metadata, identity — exercised end to end
-on every platform this library claims.
+Thirty-four checks, the same thirty-four everywhere: every native-dependent
+desktop test runs on the phone too. They cover PCM precision and all delivery
+formats, seeking and end-of-stream behaviour, path and stream inputs, invalid
+and failing inputs, tags and cover art, layouts and codec identity, and the
+FFmpeg license and configuration. That is the whole public surface — decode,
+metadata, identity — exercised end to end on every platform this library
+claims.
 
 The iOS run has a second mode, and it is the one that says whether the
 *package* works:
@@ -477,7 +475,7 @@ The iOS run has a second mode, and it is the one that says whether the
 FFAUDIO_PACKAGE_VERSION=0.1.0-alpha.0.9 scripts/ios-device-checks.sh
 ```
 
-Same thirteen checks, same runner, but the binding comes from `FFAudio.NET`
+Same thirty-four checks, same runner, but the binding comes from `FFAudio.NET`
 and the framework from `FFAudio.NET.iOS` instead of from this tree. That
 matters more here than anywhere else: on iOS the native does not arrive by
 runtime identifier, it arrives because the package ships a `.targets` file

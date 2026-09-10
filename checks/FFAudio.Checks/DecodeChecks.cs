@@ -40,20 +40,6 @@ public static class DecodeChecks
     {
         var results = new List<CheckResult>();
 
-        // First, and separately, because everything after it is meaningless
-        // if the answer is no: a run where the façade never loaded should say
-        // so once rather than fail eight times for the same reason.
-        results.Add(Run("the façade is loadable here", () =>
-        {
-            if (!Decoder.IsAvailable)
-                throw new CheckFailedException(
-                    "Decoder.IsAvailable is false - the façade was not found, would not load, "
-                    + "or reports an ABI this build was not compiled against");
-        }));
-
-        if (!results[0].Passed)
-            return results;
-
         var directory = Path.Combine(Path.GetTempPath(), "ffaudio-checks");
         Directory.CreateDirectory(directory);
 
@@ -62,21 +48,47 @@ public static class DecodeChecks
             var path = SyntheticHiResWav.CreateFile(
                 directory, "hires.wav", Rate, Frames, SyntheticHiResWav.Ramp24());
 
+            // Keep this list in the same order as the desktop suite. The
+            // mobile heads cannot run xUnit, but they must exercise every
+            // behaviour a desktop build does rather than a smaller proxy.
+            results.Add(Run("the native library matches the expected ABI", () => NativeLibraryMatchesAbi(path)));
             results.Add(Run("a 24-bit source arrives with every bit", () => EveryBitSurvives(path)));
-            results.Add(Run("each sample format is delivered at its own width", () => EveryFormatIsItsOwnWidth(path)));
+            results.Add(Run("a 24-bit source delivered as 16-bit loses low bits", () => S16LosesLowBits(path)));
+            results.Add(Run("a 24-bit source delivered as 32-bit has an empty low byte", () => S32HasEmptyLowByte(path)));
+            results.Add(Run("24-bit output is packed 32-bit output", () => S24IsPackedS32(path)));
+            results.Add(Run("float output preserves a 24-bit source exactly", () => F32IsExact(path)));
+            results.Add(Run("16-bit output reports its width", () => FormatHasRightWidth(path, SampleFormat.S16, 2)));
+            results.Add(Run("24-bit output reports its width", () => FormatHasRightWidth(path, SampleFormat.S24, 3)));
+            results.Add(Run("32-bit output reports its width", () => FormatHasRightWidth(path, SampleFormat.S32, 4)));
+            results.Add(Run("float output reports its width", () => FormatHasRightWidth(path, SampleFormat.F32, 4)));
+            results.Add(Run("source and delivered formats are reported separately", () => SourceFormatIsReported(path)));
+            results.Add(Run("resampling delivers the expected frame count", () => ResamplingIsRight(path)));
             results.Add(Run("a managed stream decodes what the path decodes", () => StreamMatchesPath(path)));
             results.Add(Run("an unseekable stream still decodes", () => UnseekableStreamDecodes(path)));
+            results.Add(Run("an unseekable stream refuses to seek", () => ForwardOnlyStreamRefusesSeek(path)));
             results.Add(Run("seeking lands at or before the request", () => SeekLandsWhereItSays(path)));
-            results.Add(Run("a resample delivers the frames it promises", () => ResamplingIsRight(path)));
+            results.Add(Run("seeking to the start replays the same samples", () => SeekingBackReplaysSamples(path)));
+            results.Add(Run("reading past the end returns zero", () => ReadingPastEndReturnsZero(path)));
+            results.Add(Run("a non-audio file fails to open", () => NonAudioFailsToOpen(directory)));
+            results.Add(Run("a missing file fails with its reason", () => MissingFileFailsWithReason(directory)));
+            results.Add(Run("a stream failure faults instead of ending quietly", () => FailingStreamFaults(path)));
 
             var tagged = SyntheticTaggedAiff.CreateFile(directory, "tagged.aiff", 44100, 4410);
 
             results.Add(Run("a file says what it was tagged with", () => TagsComeBack(tagged)));
             results.Add(Run("cover art comes back byte for byte", () => CoverArtComesBack(tagged)));
-            results.Add(Run("an untagged file says so rather than failing", () => NoTagsIsAnAnswer(path)));
+            results.Add(Run("an untagged file has no tags", () => NoTagsAreReported(path)));
+            results.Add(Run("a file without cover art says so", () => NoCoverArtIsReported(path)));
+            results.Add(Run("a stereo file reports a stereo layout", () => StereoLayoutIsReported(tagged)));
+            results.Add(Run("a downmix reports the layout it produces", () => DownmixLayoutIsReported(tagged)));
             results.Add(Run("a file names its codec and its container", () => NamesAreRight(tagged, path)));
-            results.Add(Run("the layout describes the pcm being delivered", () => LayoutFollowsTheDownmix(tagged)));
-            results.Add(Run("the binary says which FFmpeg it is", WhichFfmpeg));
+            results.Add(Run("a stream carries metadata", () => StreamCarriesMetadata(tagged)));
+            results.Add(Run("reading metadata does not disturb decoding", () => MetadataDoesNotDisturbDecode(tagged)));
+
+            results.Add(Run("the binary reports its FFmpeg version and license", FfmpegIdentityIsReported));
+            results.Add(Run("the FFmpeg configuration is returned whole", FfmpegConfigurationIsWhole));
+            results.Add(Run("the redistribution flag matches the FFmpeg license", RedistributionFlagMatchesLicense));
+            results.Add(Run("the mobile FFmpeg build is LGPL-only", MobileBuildIsRedistributable));
         }
         finally
         {
@@ -121,31 +133,111 @@ public static class DecodeChecks
         return $"{Frames} frames, all 24 bits";
     }
 
-    // Every format the library offers, at the width it says. This is where an
-    // AOT-specific marshalling fault would show as plausible nonsense rather
-    // than a throw: a struct read at the wrong offsets still returns numbers.
-    private static string EveryFormatIsItsOwnWidth(string path)
+    private static string NativeLibraryMatchesAbi(string path)
     {
-        var widths = new (SampleFormat Format, int Bytes)[]
-        {
-            (SampleFormat.S16, 2),
-            (SampleFormat.S24, 3),
-            (SampleFormat.S32, 4),
-            (SampleFormat.F32, 4),
-        };
+        using var decoder = Decoder.OpenPath(path, SampleFormat.S16);
+        return $"ABI {decoder.Format.SampleFormat}";
+    }
 
-        foreach (var (format, bytes) in widths)
-        {
-            using var decoder = Decoder.OpenPath(path, format);
-            Expect(decoder.Format.BytesPerFrame == bytes * Channels,
-                $"{format}: {decoder.Format.BytesPerFrame} bytes per frame, wanted {bytes * Channels}");
+    private static string S16LosesLowBits(string path)
+    {
+        using var decoder = Decoder.OpenPath(path, SampleFormat.S16);
+        var pcm = DecodeAll(decoder);
 
-            var pcm = DecodeAll(decoder);
-            Expect(pcm.Length == Frames * bytes * Channels,
-                $"{format}: {pcm.Length} bytes, wanted {Frames * bytes * Channels}");
+        Expect(pcm.Length == Frames * 4, $"{pcm.Length} bytes, wanted {Frames * 4}");
+
+        var expected = SyntheticHiResWav.Ramp24();
+        var differing = 0;
+        for (var frame = 0; frame < Frames; frame++)
+        {
+            var delivered = BitConverter.ToInt16(pcm, frame * 4);
+            if (delivered != (short)(expected(frame) >> 8))
+                differing++;
         }
 
-        return "S16, S24, S32, F32";
+        Expect(differing < Frames / 100, $"{differing} of {Frames} frames did not match 16-bit truncation");
+        return $"{differing} rounded frames";
+    }
+
+    private static string S32HasEmptyLowByte(string path)
+    {
+        using var decoder = Decoder.OpenPath(path, SampleFormat.S32);
+        var pcm = DecodeAll(decoder);
+
+        Expect(pcm.Length == Frames * 8, $"{pcm.Length} bytes, wanted {Frames * 8}");
+        for (var offset = 0; offset < pcm.Length; offset += 4)
+            Expect(pcm[offset] == 0, $"sample {offset / 4} has low byte {pcm[offset]}");
+
+        return $"{pcm.Length / 4} samples";
+    }
+
+    private static string S24IsPackedS32(string path)
+    {
+        using var packed = Decoder.OpenPath(path, SampleFormat.S24);
+        var s24 = DecodeAll(packed);
+        using var wide = Decoder.OpenPath(path, SampleFormat.S32);
+        var s32 = DecodeAll(wide);
+
+        Expect(s24.Length / 3 == s32.Length / 4, $"{s24.Length} S24 bytes and {s32.Length} S32 bytes disagree");
+        for (int source = 0, destination = 0; source < s32.Length; source += 4, destination += 3)
+        {
+            Expect(s24[destination] == s32[source + 1], $"sample {source / 4} byte 0 differs");
+            Expect(s24[destination + 1] == s32[source + 2], $"sample {source / 4} byte 1 differs");
+            Expect(s24[destination + 2] == s32[source + 3], $"sample {source / 4} byte 2 differs");
+        }
+
+        return $"{s24.Length / 3} samples";
+    }
+
+    private static string F32IsExact(string path)
+    {
+        using var decoder = Decoder.OpenPath(path, SampleFormat.F32);
+        var pcm = DecodeAll(decoder);
+
+        Expect(pcm.Length == Frames * 8, $"{pcm.Length} bytes, wanted {Frames * 8}");
+        var expected = SyntheticHiResWav.Ramp24();
+        for (var frame = 0; frame < Frames; frame++)
+        {
+            for (var channel = 0; channel < Channels; channel++)
+            {
+                var delivered = BitConverter.ToSingle(pcm, frame * 8 + channel * 4);
+                Expect(delivered == expected(frame) / 8388608f,
+                    $"frame {frame} channel {channel}: {delivered}, wanted {expected(frame) / 8388608f}");
+            }
+        }
+
+        return $"{Frames} frames";
+    }
+
+    private static string FormatHasRightWidth(string path, SampleFormat format, int bytesPerSample)
+    {
+        using var decoder = Decoder.OpenPath(path, format);
+        var pcm = DecodeAll(decoder);
+
+        Expect(decoder.Format.SampleFormat == format, $"format {decoder.Format.SampleFormat}, wanted {format}");
+        Expect(decoder.Format.Channels == Channels, $"{decoder.Format.Channels} channels, wanted {Channels}");
+        Expect(decoder.Format.BytesPerFrame == bytesPerSample * Channels,
+            $"{decoder.Format.BytesPerFrame} bytes per frame, wanted {bytesPerSample * Channels}");
+        Expect(pcm.Length == Frames * decoder.Format.BytesPerFrame,
+            $"{pcm.Length} bytes, wanted {Frames * decoder.Format.BytesPerFrame}");
+
+        return $"{decoder.Format.BytesPerFrame} bytes per frame";
+    }
+
+    private static string SourceFormatIsReported(string path)
+    {
+        using var decoder = Decoder.OpenPath(path, SampleFormat.S16, sampleRate: 48000, channels: 2);
+
+        Expect(decoder.Format.SourceSampleRate == Rate, $"source rate {decoder.Format.SourceSampleRate}, wanted {Rate}");
+        Expect(decoder.Format.SourceBitDepth == 24, $"source depth {decoder.Format.SourceBitDepth}, wanted 24");
+        Expect(decoder.Format.SampleRate == 48000, $"sample rate {decoder.Format.SampleRate}, wanted 48000");
+        Expect(decoder.Format.SampleFormat == SampleFormat.S16, $"format {decoder.Format.SampleFormat}, wanted S16");
+        Expect(decoder.Format.Duration is { } duration
+               && duration >= TimeSpan.FromMilliseconds(245)
+               && duration <= TimeSpan.FromMilliseconds(255),
+            $"duration {decoder.Format.Duration}, wanted about 250ms");
+
+        return $"{decoder.Format.SourceSampleRate}Hz source, {decoder.Format.SampleRate}Hz output";
     }
 
     // OpenStream hands FFmpeg two function pointers into managed code. Under
@@ -160,8 +252,8 @@ public static class DecodeChecks
             fromPath = DecodeAll(decoder);
 
         byte[] fromStream;
-        using (var file = File.OpenRead(path))
-        using (var decoder = Decoder.OpenStream(file, SampleFormat.S24))
+        using (var source = new MemoryStream(File.ReadAllBytes(path)))
+        using (var decoder = Decoder.OpenStream(source, SampleFormat.S24))
             fromStream = DecodeAll(decoder);
 
         Expect(fromStream.Length == fromPath.Length,
@@ -181,14 +273,19 @@ public static class DecodeChecks
     // trampoline hangs rather than throws.
     private static string UnseekableStreamDecodes(string path)
     {
-        using var file = File.OpenRead(path);
-        using var forward = new ForwardOnlyStream(file);
+        byte[] expected;
+        using (var fromPath = Decoder.OpenPath(path, SampleFormat.S24))
+            expected = DecodeAll(fromPath);
+
+        using var forward = new ForwardOnlyStream(new MemoryStream(File.ReadAllBytes(path)));
         using var decoder = Decoder.OpenStream(forward, SampleFormat.S24);
 
         var pcm = DecodeAll(decoder);
-        Expect(pcm.Length == Frames * 6, $"{pcm.Length} bytes, wanted {Frames * 6}");
+        Expect(pcm.Length == expected.Length, $"{pcm.Length} bytes, wanted {expected.Length}");
+        for (var i = 0; i < pcm.Length; i++)
+            Expect(pcm[i] == expected[i], $"byte {i} differs: {pcm[i]} vs {expected[i]}");
 
-        return $"{pcm.Length} bytes with no seeking";
+        return $"{pcm.Length} bytes, identical";
     }
 
     // Seek returns where decode actually resumed, which is at or before the
@@ -205,10 +302,11 @@ public static class DecodeChecks
         Expect(landed <= asked, $"asked {asked}, landed {landed} - after the request");
         Expect(landed >= TimeSpan.Zero, $"landed {landed}, before the start");
 
-        var pcm = DecodeAll(decoder);
-        Expect(pcm.Length > 0, "nothing decoded after the seek");
+        var remaining = DecodeAll(decoder).Length / 6;
+        Expect(remaining >= Frames - (int)(0.100 * Rate) - 64 && remaining <= Frames,
+            $"{remaining} frames after seeking, wanted up to {Frames}");
 
-        return $"asked {asked.TotalMilliseconds:F0}ms, landed {landed.TotalMilliseconds:F0}ms";
+        return $"asked {asked.TotalMilliseconds:F0}ms, landed {landed.TotalMilliseconds:F0}ms, {remaining} frames remain";
     }
 
     // Asking for a rate the source is not. swresample is a separate FFmpeg
@@ -218,7 +316,7 @@ public static class DecodeChecks
     {
         const int target = 48000;
 
-        using var decoder = Decoder.OpenPath(path, SampleFormat.S24, target);
+        using var decoder = Decoder.OpenPath(path, SampleFormat.S16, target);
         Expect(decoder.Format.SampleRate == target,
             $"sample rate {decoder.Format.SampleRate}, wanted {target}");
         Expect(decoder.Format.SourceSampleRate == Rate,
@@ -234,6 +332,110 @@ public static class DecodeChecks
         Expect(Math.Abs(frames - wanted) <= 64, $"{frames} frames, wanted about {wanted}");
 
         return $"{Rate}Hz to {target}Hz, {frames} frames";
+    }
+
+    private static string ForwardOnlyStreamRefusesSeek(string path)
+    {
+        using var source = new ForwardOnlyStream(new MemoryStream(File.ReadAllBytes(path)));
+        using var decoder = Decoder.OpenStream(source, SampleFormat.S24);
+
+        try
+        {
+            _ = decoder.Seek(TimeSpan.FromMilliseconds(100));
+        }
+        catch (DecodeException)
+        {
+            return "DecodeException";
+        }
+
+        throw new CheckFailedException("seeking an unseekable stream did not throw DecodeException");
+    }
+
+    private static string SeekingBackReplaysSamples(string path)
+    {
+        using var decoder = Decoder.OpenPath(path, SampleFormat.S24);
+        var first = new byte[6 * 512];
+        Expect(ReadFully(decoder, first) == first.Length, "the first read did not fill the buffer");
+
+        _ = decoder.Seek(TimeSpan.Zero);
+
+        var again = new byte[first.Length];
+        Expect(ReadFully(decoder, again) == again.Length, "the replay did not fill the buffer");
+        for (var i = 0; i < first.Length; i++)
+            Expect(first[i] == again[i], $"byte {i} changed after seeking to the start");
+
+        return $"{first.Length} bytes replayed";
+    }
+
+    private static string ReadingPastEndReturnsZero(string path)
+    {
+        using var decoder = Decoder.OpenPath(path, SampleFormat.S24);
+        _ = DecodeAll(decoder);
+
+        var buffer = new byte[4096];
+        Expect(decoder.Read(buffer) == 0, "the first read after the end was not zero");
+        Expect(decoder.Read(buffer) == 0, "the second read after the end was not zero");
+        return "zero twice";
+    }
+
+    private static string NonAudioFailsToOpen(string directory)
+    {
+        var path = Path.Combine(directory, "not-audio.wav");
+        File.WriteAllText(path, "this is not a wav file, whatever its name says");
+
+        try
+        {
+            using var decoder = Decoder.OpenPath(path, SampleFormat.S16);
+        }
+        catch (DecodeException)
+        {
+            return "DecodeException";
+        }
+
+        throw new CheckFailedException("a non-audio file opened successfully");
+    }
+
+    private static string MissingFileFailsWithReason(string directory)
+    {
+        try
+        {
+            using var decoder = Decoder.OpenPath(Path.Combine(directory, "absent.wav"), SampleFormat.S16);
+        }
+        catch (DecodeException exception)
+        {
+            Expect(exception.Message.Contains("No such file", StringComparison.OrdinalIgnoreCase),
+                $"missing-file error was {Quote(exception.Message)}");
+            return exception.Message;
+        }
+
+        throw new CheckFailedException("a missing file opened successfully");
+    }
+
+    private static string FailingStreamFaults(string path)
+    {
+        var bytes = File.ReadAllBytes(path);
+        var source = new FailingStream(bytes, bytes.Length / 3);
+        using var decoder = Decoder.OpenStream(source, SampleFormat.S24);
+
+        var produced = 0;
+        var buffer = new byte[16384];
+        try
+        {
+            int read;
+            while ((read = decoder.Read(buffer)) > 0)
+                produced += read;
+        }
+        catch (DecodeException exception)
+        {
+            var expectedMessage = OperatingSystem.IsWindows() ? "I/O error" : "Input/output error";
+            Expect(exception.Message.Contains(expectedMessage, StringComparison.OrdinalIgnoreCase),
+                $"stream failure was {Quote(exception.Message)}");
+            Expect(produced > 0 && produced < Frames * 6, $"{produced} bytes before failure");
+            Expect(source.Reads is >= 1 and <= 200, $"{source.Reads} reads before failure");
+            return $"{produced} bytes before {source.Reads} reads";
+        }
+
+        throw new CheckFailedException("a failing stream ended without DecodeException");
     }
 
     // Tags are read off the format context rather than the packet stream, so
@@ -280,17 +482,35 @@ public static class DecodeChecks
         return $"{art.Bytes.Length} bytes of {art.MimeType}";
     }
 
-    // Most music files have no embedded art and plenty have no tags, so a
-    // caller asking is not making a mistake. An empty answer rather than a
-    // throw is the difference between a library and a minefield.
-    private static string NoTagsIsAnAnswer(string path)
+    private static string NoTagsAreReported(string path)
     {
         using var decoder = Decoder.OpenPath(path, SampleFormat.S24);
-
         Expect(decoder.Tags.Count == 0, $"{decoder.Tags.Count} tags on a file that has none");
-        Expect(decoder.TryReadCoverArt() is null, "cover art on a file that has none");
+        return "no tags";
+    }
 
-        return "no tags, no art, no exception";
+    private static string NoCoverArtIsReported(string path)
+    {
+        using var decoder = Decoder.OpenPath(path, SampleFormat.S24);
+        Expect(decoder.TryReadCoverArt() is null, "cover art on a file that has none");
+        return "no art";
+    }
+
+    private static string StereoLayoutIsReported(string path)
+    {
+        using var decoder = Decoder.OpenPath(path, SampleFormat.S16);
+        Expect(decoder.Format.Channels == 2, $"{decoder.Format.Channels} channels, wanted 2");
+        Expect(decoder.Format.ChannelLayout == "stereo", $"layout {Quote(decoder.Format.ChannelLayout)}, wanted stereo");
+        return decoder.Format.ChannelLayout;
+    }
+
+    private static string DownmixLayoutIsReported(string path)
+    {
+        using var decoder = Decoder.OpenPath(path, SampleFormat.S16, sampleRate: 0, channels: 1);
+        Expect(decoder.Format.SourceChannels == 2, $"source channels {decoder.Format.SourceChannels}, wanted 2");
+        Expect(decoder.Format.Channels == 1, $"{decoder.Format.Channels} channels, wanted 1");
+        Expect(decoder.Format.ChannelLayout == "mono", $"layout {Quote(decoder.Format.ChannelLayout)}, wanted mono");
+        return decoder.Format.ChannelLayout;
     }
 
     private static string NamesAreRight(string tagged, string plain)
@@ -306,49 +526,83 @@ public static class DecodeChecks
         return $"{aiff.Format.Container}/{aiff.Format.Codec} and {wav.Format.Container}/{wav.Format.Codec}";
     }
 
-    // Delivered, not source: a caller that asked for a downmix has to be told
-    // about the channels it is going to get. `channels` is a number and a
-    // number cannot say which channel is which, which is the whole reason the
-    // layout string exists.
-    private static string LayoutFollowsTheDownmix(string path)
+    private static string StreamCarriesMetadata(string path)
     {
-        using var stereo = Decoder.OpenPath(path, SampleFormat.S16);
-        Expect(stereo.Format.Channels == 2, $"{stereo.Format.Channels} channels, wanted 2");
-        Expect(stereo.Format.ChannelLayout == "stereo", $"layout {Quote(stereo.Format.ChannelLayout)}, wanted stereo");
-
-        using var mono = Decoder.OpenPath(path, SampleFormat.S16, sampleRate: 0, channels: 1);
-        Expect(mono.Format.SourceChannels == 2, $"source channels {mono.Format.SourceChannels}, wanted 2");
-        Expect(mono.Format.Channels == 1, $"{mono.Format.Channels} channels, wanted 1");
-        Expect(mono.Format.ChannelLayout == "mono", $"layout {Quote(mono.Format.ChannelLayout)}, wanted mono");
-
-        return "stereo as read, mono as asked for";
+        using var file = File.OpenRead(path);
+        using var decoder = Decoder.OpenStream(file, SampleFormat.S16);
+        Expect(Tag(decoder, "title") == SyntheticTaggedAiff.Title,
+            $"title {Quote(Tag(decoder, "title"))}, wanted {Quote(SyntheticTaggedAiff.Title)}");
+        Expect(decoder.TryReadCoverArt() is not null, "no cover art came back");
+        return "tags and art";
     }
 
-    // Which FFmpeg is actually inside this artifact, asked of the artifact
-    // rather than of the build script that made it - a configure line does
-    // not travel with a binary and avutil does. Reported rather than judged:
-    // a development build against a distro FFmpeg is GPL and that is fine
-    // here, so this fails only if the binary cannot answer at all.
-    //
-    // It needs no decoder open, which is the point of it living in FFmpegBuild
-    // rather than on Decoder, and it is worth running on a phone because a
-    // static mobile build is the one that has to be LGPL.
-    private static string WhichFfmpeg()
+    private static string MetadataDoesNotDisturbDecode(string path)
     {
-        var version = FFmpegBuild.Version;
-        var license = FFmpegBuild.License;
+        byte[] expected;
+        using (var straight = Decoder.OpenPath(path, SampleFormat.S16))
+            expected = DecodeAll(straight);
+
+        using var interrupted = Decoder.OpenPath(path, SampleFormat.S16);
+        var buffer = new byte[4096];
+        var first = interrupted.Read(buffer);
+        _ = interrupted.Tags;
+        _ = interrupted.TryReadCoverArt();
+
+        var rest = new MemoryStream();
+        rest.Write(buffer, 0, first);
+        int read;
+        while ((read = interrupted.Read(buffer)) > 0)
+            rest.Write(buffer, 0, read);
+
+        var actual = rest.ToArray();
+        Expect(actual.Length == expected.Length, $"{actual.Length} bytes, wanted {expected.Length}");
+        for (var i = 0; i < actual.Length; i++)
+            Expect(actual[i] == expected[i], $"byte {i} differs after reading metadata");
+
+        return $"{actual.Length} bytes";
+    }
+
+    private static string FfmpegIdentityIsReported()
+    {
+        Expect(!string.IsNullOrWhiteSpace(FFmpegBuild.Version), "the build reports no FFmpeg version");
+        Expect(!string.IsNullOrWhiteSpace(FFmpegBuild.License), "the build reports no FFmpeg license");
+        return $"{FFmpegBuild.Version}, {FFmpegBuild.License}";
+    }
+
+    private static string FfmpegConfigurationIsWhole()
+    {
         var configuration = FFmpegBuild.Configuration;
+        Expect(configuration.StartsWith("--", StringComparison.Ordinal),
+            $"configuration {Quote(configuration)} does not start with --");
+        Expect(configuration == FFmpegBuild.Configuration, "the configuration changed between reads");
+        Expect(configuration.Length > 256,
+            $"a {configuration.Length}-character configuration fits the initial buffer");
+        return $"{configuration.Length} characters";
+    }
 
-        Expect(version.Length > 0, "the build reports no version");
-        Expect(license.Length > 0, "the build reports no license");
+    private static string RedistributionFlagMatchesLicense()
+    {
+        var isLgpl = FFmpegBuild.License.StartsWith("LGPL", StringComparison.Ordinal);
+        Expect(FFmpegBuild.IsRedistributable == isLgpl,
+            $"license {Quote(FFmpegBuild.License)} and IsRedistributable disagree");
+        return isLgpl ? "LGPL" : "not LGPL";
+    }
 
-        // Long enough to have gone round NativeText's grow-and-retry loop,
-        // which is the only part of this that can be wrong on one platform
-        // and right on another.
-        Expect(configuration.Length > 64, $"a {configuration.Length}-character configure line is not one");
+    private static string MobileBuildIsRedistributable()
+    {
+        var required = OperatingSystem.IsIOS()
+            || OperatingSystem.IsAndroid()
+            || Environment.GetEnvironmentVariable("FFAUDIO_REQUIRE_LGPL") is { Length: > 0 };
+        if (!required)
+            return "not required for this development build";
 
-        return $"{version}, {license}"
-            + (FFmpegBuild.IsRedistributable ? "" : " - a development build, not shippable");
+        Expect(FFmpegBuild.IsRedistributable,
+            $"FFmpeg is under {Quote(FFmpegBuild.License)}; configuration: {FFmpegBuild.Configuration}");
+        Expect(!FFmpegBuild.Configuration.Contains("--enable-gpl", StringComparison.Ordinal),
+            "FFmpeg configuration enables GPL");
+        Expect(!FFmpegBuild.Configuration.Contains("--enable-nonfree", StringComparison.Ordinal),
+            "FFmpeg configuration enables nonfree components");
+        return "LGPL-only";
     }
 
     private static string? Tag(Decoder decoder, string key)
@@ -372,6 +626,20 @@ public static class DecodeChecks
         while ((read = decoder.Read(buffer)) > 0)
             output.Write(buffer, 0, read);
         return output.ToArray();
+    }
+
+    private static int ReadFully(Decoder decoder, Span<byte> buffer)
+    {
+        var total = 0;
+        while (total < buffer.Length)
+        {
+            var read = decoder.Read(buffer[total..]);
+            if (read == 0)
+                break;
+            total += read;
+        }
+
+        return total;
     }
 
     private static void Expect(bool held, string complaint)
@@ -423,5 +691,50 @@ public static class DecodeChecks
         public override void SetLength(long value) => throw new NotSupportedException();
         public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
         public override void Flush() { }
+    }
+
+    private sealed class FailingStream(byte[] bytes, int failAfter) : Stream
+    {
+        private int _position;
+
+        public int Reads { get; private set; }
+
+        public override bool CanRead => true;
+        public override bool CanSeek => true;
+        public override bool CanWrite => false;
+        public override long Length => bytes.Length;
+        public override long Position { get => _position; set => _position = (int)value; }
+
+        public override int Read(byte[] buffer, int offset, int count) => Read(buffer.AsSpan(offset, count));
+
+        public override int Read(Span<byte> buffer)
+        {
+            Reads++;
+            if (_position >= failAfter)
+                throw new IOException("the connection went away");
+
+            var take = Math.Min(buffer.Length, bytes.Length - _position);
+            if (take <= 0)
+                return 0;
+
+            bytes.AsSpan(_position, take).CopyTo(buffer);
+            _position += take;
+            return take;
+        }
+
+        public override void Flush() { }
+        public override long Seek(long offset, SeekOrigin origin)
+        {
+            _position = (int)(origin switch
+            {
+                SeekOrigin.Begin => offset,
+                SeekOrigin.Current => _position + offset,
+                _ => bytes.Length + offset,
+            });
+            return _position;
+        }
+
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
     }
 }

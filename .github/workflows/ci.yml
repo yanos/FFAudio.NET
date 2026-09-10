@@ -42,7 +42,7 @@ jobs:
   # on macOS, and a pinned LGPL download linked with MSVC on Windows. Those
   # are three ways for the same C to stop compiling.
   test:
-    name: Test (${{ matrix.os }})
+    name: Build and test (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
@@ -212,7 +212,7 @@ jobs:
   # script's own hash, because the FFmpeg version and the decoder list are
   # both in it: change either and the cache misses, which is exactly right.
   ios:
-    name: Checks (iOS Simulator)
+    name: Build and test (iOS Simulator)
     runs-on: macos-latest
 
     steps:
@@ -251,7 +251,7 @@ jobs:
           if-no-files-found: error
 
   android:
-    name: Checks (Android emulator)
+    name: Build and test (Android emulator)
     runs-on: ubuntu-latest
 
     steps:
@@ -444,7 +444,7 @@ jobs:
   # packs an empty framework, or drops the .targets file, or names the wrong
   # buildTransitive folder - none of which anything else here can see.
   ios-package:
-    name: Checks (iOS, from the package)
+    name: Build and test (iOS package)
     needs: pack
     runs-on: macos-latest
 
