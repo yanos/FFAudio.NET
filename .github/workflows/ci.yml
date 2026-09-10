@@ -6,7 +6,8 @@ name: CI
 # only repeat them and hope the second answer matches the first. Chained here,
 # the package that reaches nuget.org is the exact file a green run produced.
 #
-#     push / PR       test on three desktops, then pack
+#     push / PR       test on three desktops, cross-compile for two phones,
+#                     then pack behind all five
 #     push of v*      the same, and then publish what was packed
 #
 # A version is a decision, and `git tag v1.2.3` followed by pushing the tag is
@@ -113,17 +114,92 @@ jobs:
           path: native/artifacts/
           if-no-files-found: error
 
+  # The phones are a build and not a test, and the asymmetry is the repo's, not
+  # an oversight here: FFAudio.NET is one net10.0 library and one net10.0 test
+  # project, so there is no iOS or Android head for a test to run inside. What
+  # can be checked on every push is that the façade still cross-compiles and
+  # still links against a static FFmpeg, which is where it actually breaks -
+  # the C is shared, but the toolchain, the sysroot and the link line are not.
+  #
+  # Proving these decode needs a runner head per platform driven by a script
+  # per platform, on a simulator and an emulator. That is a real piece of work
+  # and it is not here yet.
+  #
+  # The expensive half is FFmpeg itself: build-ffmpeg.sh cross-compiles it from
+  # source, which is tens of minutes across two iOS slices or three Android
+  # ABIs. Both scripts are idempotent - a prefix with a libavformat.a in it is
+  # left alone - so caching the prefix makes every run after the first just the
+  # façade, which is one translation unit. The key is the script's own hash,
+  # because the FFmpeg version and the decoder list are both in it: change
+  # either and the cache misses, which is exactly right.
+  ios:
+    name: Build (iOS)
+    runs-on: macos-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache the cross-compiled FFmpeg
+        uses: actions/cache@v4
+        with:
+          path: native/ios/ffmpeg/prefix
+          key: ffmpeg-ios-${{ hashFiles('native/ios/build-ffmpeg.sh') }}
+
+      - name: Build FFmpeg
+        run: native/ios/build-ffmpeg.sh
+
+      - name: Build ffaudio
+        run: native/ios/build.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ffaudio-iOS
+          path: native/artifacts/ios/
+          if-no-files-found: error
+
+  android:
+    name: Build (Android)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache the cross-compiled FFmpeg
+        uses: actions/cache@v4
+        with:
+          path: native/android/ffmpeg/prefix
+          key: ffmpeg-android-${{ hashFiles('native/android/build-ffmpeg.sh') }}
+
+      # The runner image ships an NDK already; the scripts want it under the
+      # name the NDK's own docs use, which is what a developer machine sets.
+      - name: Build FFmpeg
+        run: |
+          export ANDROID_NDK_HOME="$ANDROID_NDK_LATEST_HOME"
+          native/android/build-ffmpeg.sh
+
+      - name: Build ffaudio
+        run: |
+          export ANDROID_NDK_HOME="$ANDROID_NDK_LATEST_HOME"
+          native/android/build.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ffaudio-Android
+          path: native/artifacts/android/
+          if-no-files-found: error
+
   # Packing on every push, not only on a tag. A release that discovers its own
   # packaging is broken is a release that has to be re-cut, and the version
   # this produces - MinVer's 0.1.0-alpha.0.<height> for an untagged commit - is
   # a real pre-release, not a placeholder. The artifact is downloadable from
   # the run, so a consumer can try a commit before it is tagged.
   #
-  # `needs: test` gates it on all three platforms, so a commit that stopped
-  # compiling on Windows never produces a package at all.
+  # `needs` gates it on all five platforms, so a commit that stopped compiling
+  # on Windows - or stopped cross-compiling for a phone - never produces a
+  # package at all.
   pack:
     name: Pack
-    needs: test
+    needs: [test, ios, android]
     runs-on: ubuntu-latest
 
     outputs:

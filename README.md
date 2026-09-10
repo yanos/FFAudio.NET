@@ -319,16 +319,33 @@ Without one, `Decoder.OpenPath` throws `DllNotFoundException` out of
 for it to call.
 
 `.github/workflows/ci.yml` builds the façade and runs the suite against it on
-all three desktops on every push, then packs once behind them — `needs: test`,
-so a commit that stopped compiling on Windows produces no package at all. That
-pre-release package is a downloadable artifact of the run, so a commit can be
-tried before anyone decides to tag it, and packaging never breaks for the
-first time during a release.
+all three desktops on every push, cross-compiles it for iOS and Android
+alongside them, and packs once behind all five — so a commit that stopped
+compiling on Windows, or stopped cross-compiling for a phone, produces no
+package at all. That pre-release package is a downloadable artifact of the
+run, so a commit can be tried before anyone decides to tag it, and packaging
+never breaks for the first time during a release.
 
-Each test job also uploads the façade it just proved decodes, as
-`ffaudio-Linux`, `ffaudio-macOS` and `ffaudio-Windows`. Nothing downstream
+The phones are a build and not a test, and that asymmetry is this repo's
+rather than CI's: there is one `net10.0` library and one `net10.0` test
+project here, so there is no iOS or Android head for a test to run inside.
+What every push does check is the part that actually breaks — the toolchain,
+the sysroot and the link line differ per platform even though the C does not.
+Proving a phone *decodes* needs a runner head and a driving script per
+platform, on a simulator and an emulator, and that is not written yet.
+
+The expensive half of a mobile job is FFmpeg itself: `build-ffmpeg.sh`
+cross-compiles it from source, tens of minutes across two iOS slices or three
+Android ABIs. Both scripts leave an existing prefix alone, so CI caches
+`native/<platform>/ffmpeg/prefix` keyed on the script's own hash — the FFmpeg
+version and the decoder list both live in that script, so changing either
+misses the cache, and every other run is just the façade's single translation
+unit.
+
+Every build job uploads what it produced: `ffaudio-Linux`, `ffaudio-macOS`,
+`ffaudio-Windows`, `ffaudio-iOS`, `ffaudio-Android`. Nothing downstream
 consumes them yet — the package still carries no decoder — but a built native
-from each platform, at one commit, in one run, is the half of a
+from every platform, at one commit, in one run, is the half of a
 `runtimes/<rid>/native/` payload that has to exist before the other half is
 worth writing.
 
