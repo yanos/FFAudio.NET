@@ -23,6 +23,10 @@ namespace FFAudio
 
         internal const int SeekSize = 0x10000;
 
+        internal const int ErrorBase = -10000;
+        internal const int NotPresent = ErrorBase - 6;
+        internal const int Truncated = ErrorBase - 7;
+
         // A module initializer rather than this class's static constructor,
         // which is where it was and which worked everywhere except the one
         // platform that needs it most. A P/Invoke has no body for a type
@@ -153,6 +157,28 @@ namespace FFAudio
 
         [DllImport(Library, EntryPoint = "ffaudio_decoder_close", CallingConvention = CallingConvention.Cdecl)]
         internal static extern void Close(IntPtr decoder);
+
+        [DllImport(Library, EntryPoint = "ffaudio_decoder_tag_count", CallingConvention = CallingConvention.Cdecl)]
+        internal static extern int TagCount(IntPtr decoder, out int count);
+
+        [DllImport(Library, EntryPoint = "ffaudio_decoder_tag_at", CallingConvention = CallingConvention.Cdecl)]
+        internal static extern unsafe int TagAt(IntPtr decoder, int index,
+                                                byte* key, int keyBytes,
+                                                byte* value, int valueBytes);
+
+        [DllImport(Library, EntryPoint = "ffaudio_decoder_cover_art", CallingConvention = CallingConvention.Cdecl)]
+        internal static extern unsafe int CoverArt(IntPtr decoder,
+                                                   byte* buffer, int bufferBytes,
+                                                   out int outBytes,
+                                                   byte* mime, int mimeBytes);
+
+        [DllImport(Library, EntryPoint = "ffaudio_decoder_channel_layout", CallingConvention = CallingConvention.Cdecl)]
+        internal static extern unsafe int ChannelLayout(IntPtr decoder, byte* buffer, int bufferBytes);
+
+        [DllImport(Library, EntryPoint = "ffaudio_decoder_names", CallingConvention = CallingConvention.Cdecl)]
+        internal static extern unsafe int Names(IntPtr decoder,
+                                                byte* codec, int codecBytes,
+                                                byte* container, int containerBytes);
 
         [DllImport(Library, EntryPoint = "ffaudio_error_string", CallingConvention = CallingConvention.Cdecl)]
         internal static extern unsafe void ErrorString(int code, byte* buffer, int bufferBytes);

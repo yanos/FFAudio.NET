@@ -59,6 +59,8 @@ typedef enum {
 #define FFAUDIO_ERR_NO_MEMORY   (FFAUDIO_ERR_BASE - 3)
 #define FFAUDIO_ERR_ABI         (FFAUDIO_ERR_BASE - 4)
 #define FFAUDIO_ERR_IO          (FFAUDIO_ERR_BASE - 5)
+#define FFAUDIO_ERR_NOT_PRESENT (FFAUDIO_ERR_BASE - 6)
+#define FFAUDIO_ERR_TRUNCATED   (FFAUDIO_ERR_BASE - 7)
 
 // Read at most buf_size bytes. Returns the count, 0 at end of stream, or a
 // negative value for an error. This is FFmpeg's own AVIOContext read
@@ -126,6 +128,74 @@ FFAUDIO_API int ffaudio_decoder_seek(ffaudio_decoder *decoder,
                                    int64_t *out_landed_ms);
 
 FFAUDIO_API void ffaudio_decoder_close(ffaudio_decoder *decoder);
+
+
+// ------------------------------------------------------- what the file says
+//
+// Everything below is metadata rather than audio, and it is here for one
+// reason: a caller that cannot ask this façade reaches past it to FFmpeg, and
+// then has two routes to FFmpeg to build, ship and keep in step. That is the
+// exact outcome the façade exists to prevent, so the cheap questions every
+// consumer asks are answered on this side of the header.
+//
+// None of it allocates. Strings go into caller-owned buffers and are always
+// NUL-terminated; a buffer too small yields FFAUDIO_ERR_TRUNCATED and a
+// truncated-but-valid string, so a caller can retry larger or accept it.
+//
+// These are additions, not changes - no existing function or struct moved -
+// so FFAUDIO_ABI_VERSION stays 1. A library older than these symbols fails at
+// the first call to one with a link error rather than an ABI mismatch, which
+// is the one thing a version bump would have bought and is not worth the
+// churn while nothing has shipped.
+
+// How many tags this file carries. Container-level first, then the audio
+// stream's own - Vorbis comments in an Ogg live on the stream while ID3 on an
+// MP3 lives on the container, and a caller asking "what are this file's tags"
+// means both. Keys are FFmpeg's normalised names ("title", "artist",
+// "album"...) where it has one, and the container's raw key where it does not.
+// Duplicates are preserved rather than collapsed: a track really can have two
+// ARTIST comments, and which one wins is the caller's policy, not this file's.
+FFAUDIO_API int ffaudio_decoder_tag_count(ffaudio_decoder *decoder,
+                                        int32_t *out_count);
+
+// The tag at index, 0 <= index < the count above. Either buffer may be NULL
+// to skip that half.
+FFAUDIO_API int ffaudio_decoder_tag_at(ffaudio_decoder *decoder,
+                                     int32_t index,
+                                     char *key, int32_t key_bytes,
+                                     char *value, int32_t value_bytes);
+
+// The embedded cover art, which FFmpeg models as a video stream carrying a
+// single attached picture. Returns FFAUDIO_ERR_NOT_PRESENT when there is
+// none.
+//
+// Call it with buffer NULL to be told the size in out_bytes and nothing else,
+// then again with storage that fits; the bytes are the original encoded image
+// exactly as the container holds it - JPEG or PNG almost always - and this
+// façade neither decodes nor rescales it. A buffer that is too small is
+// FFAUDIO_ERR_TRUNCATED with the required size in out_bytes, and nothing is
+// written, because half a JPEG is not a smaller JPEG.
+FFAUDIO_API int ffaudio_decoder_cover_art(ffaudio_decoder *decoder,
+                                        uint8_t *buffer, int32_t buffer_bytes,
+                                        int32_t *out_bytes,
+                                        char *mime, int32_t mime_bytes);
+
+// The delivered PCM's channel layout in FFmpeg's canonical text form -
+// "stereo", "5.1(side)", "mono". The struct stays on this side of the header,
+// which is the whole trick: ffaudio_decoder_format.channels is a number, and
+// a number cannot say which channel is which.
+//
+// This describes what read() hands back, after any requested down- or
+// up-mix, rather than what the source held.
+FFAUDIO_API int ffaudio_decoder_channel_layout(ffaudio_decoder *decoder,
+                                             char *buffer, int32_t buffer_bytes);
+
+// The source's codec and container, by FFmpeg's short names - "flac" and
+// "flac", "alac" and "mov,mp4,m4a,3gp,3g2,mj2". Either buffer may be NULL.
+// One call rather than two because nothing ever wants only one of them.
+FFAUDIO_API int ffaudio_decoder_names(ffaudio_decoder *decoder,
+                                    char *codec, int32_t codec_bytes,
+                                    char *container, int32_t container_bytes);
 
 // Into caller-owned storage; never allocates, always NUL-terminates.
 FFAUDIO_API void ffaudio_error_string(int code, char *buffer, int32_t buffer_bytes);

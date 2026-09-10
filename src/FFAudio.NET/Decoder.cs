@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
@@ -29,6 +30,10 @@ namespace FFAudio
         F32 = 3,
     }
 
+    // ChannelLayout describes the PCM being delivered; Codec and Container
+    // describe where it came from. Both are here rather than on Decoder
+    // because they are answered once at open and never change, and a caller
+    // printing a file's properties wants them in the same breath as its rate.
     public readonly record struct AudioFormat(
         int SampleRate,
         int Channels,
@@ -36,7 +41,10 @@ namespace FFAudio
         int SourceBitDepth,
         int SourceSampleRate,
         int SourceChannels,
-        TimeSpan? Duration)
+        TimeSpan? Duration,
+        string ChannelLayout,
+        string Codec,
+        string Container)
     {
         public int BytesPerFrame => SampleFormat switch
         {
@@ -45,6 +53,11 @@ namespace FFAudio
             _ => 4 * Channels,
         };
     }
+
+    // The encoded image exactly as the container holds it - not decoded, not
+    // rescaled. Bytes rather than a Stream because it is already in memory by
+    // the time the container has been opened at all.
+    public sealed record CoverArt(byte[] Bytes, string MimeType);
 
     public sealed class DecodeException(string message, int code)
         : IOException($"{message}: {Native.Describe(code)}")
@@ -89,6 +102,12 @@ namespace FFAudio
                 throw new DecodeException("Could not read the decoded audio format", rc);
             }
 
+            var codec = "";
+            var container = "";
+            ReadPair(
+                (a, aBytes, b, bBytes) => Native.Names(handle, a, aBytes, b, bBytes),
+                out codec, out container);
+
             Format = new AudioFormat(
                 format.SampleRate,
                 format.Channels,
@@ -96,7 +115,10 @@ namespace FFAudio
                 format.SourceBitDepth,
                 format.SourceSampleRate,
                 format.SourceChannels,
-                format.DurationMs < 0 ? null : TimeSpan.FromMilliseconds(format.DurationMs));
+                format.DurationMs < 0 ? null : TimeSpan.FromMilliseconds(format.DurationMs),
+                ReadString((buffer, bytes) => Native.ChannelLayout(handle, buffer, bytes)),
+                codec,
+                container);
         }
 
         // Whether this build can decode through the façade at all - i.e.
@@ -284,6 +306,128 @@ namespace FFAudio
                 throw new DecodeException($"Could not seek to {requestedMs}ms", rc);
 
             return TimeSpan.FromMilliseconds(landedMs);
+        }
+
+
+        // ------------------------------------------------------------ metadata
+
+        // Read on first ask rather than at open: a player showing a file's
+        // title wants these, and a player decoding ten thousand tracks into a
+        // ring buffer never asks.
+        public IReadOnlyList<KeyValuePair<string, string>> Tags => _tags ??= ReadTags();
+
+        private IReadOnlyList<KeyValuePair<string, string>>? _tags;
+
+        private IReadOnlyList<KeyValuePair<string, string>> ReadTags()
+        {
+            ObjectDisposedException.ThrowIf(_handle == IntPtr.Zero, this);
+
+            var rc = Native.TagCount(_handle, out var count);
+            if (rc != Native.Ok)
+                throw new DecodeException("Could not count this file's tags", rc);
+
+            var handle = _handle;
+            var tags = new List<KeyValuePair<string, string>>(count);
+            for (var i = 0; i < count; i++)
+            {
+                var index = i;
+                ReadPair((k, kBytes, v, vBytes) => Native.TagAt(handle, index, k, kBytes, v, vBytes),
+                         out var key, out var value);
+                tags.Add(new KeyValuePair<string, string>(key, value));
+            }
+
+            return tags;
+        }
+
+        // Null when the file carries none, which is the ordinary case rather
+        // than a failure. A method and not a property because it copies the
+        // whole image - album art is routinely megabytes, and a property that
+        // does that surprises everyone who touches it in a debugger.
+        public CoverArt? TryReadCoverArt()
+        {
+            ObjectDisposedException.ThrowIf(_handle == IntPtr.Zero, this);
+
+            var mime = new byte[256];
+            int rc;
+            int size;
+            fixed (byte* mimeBuffer = mime)
+                rc = Native.CoverArt(_handle, null, 0, out size, mimeBuffer, mime.Length);
+
+            if (rc == Native.NotPresent)
+                return null;
+            if (rc != Native.Ok)
+                throw new DecodeException("Could not measure this file's cover art", rc);
+
+            // Asked for again now that there is somewhere to put it. The
+            // façade writes nothing into a buffer that would not hold all of
+            // it, so this cannot come back as a partial image.
+            var bytes = new byte[size];
+            fixed (byte* buffer = bytes)
+            fixed (byte* mimeBuffer = mime)
+                rc = Native.CoverArt(_handle, buffer, bytes.Length, out _, mimeBuffer, mime.Length);
+
+            if (rc != Native.Ok)
+                throw new DecodeException("Could not read this file's cover art", rc);
+
+            return new CoverArt(bytes, Text(mime));
+        }
+
+        private delegate int FillOne(byte* buffer, int bufferBytes);
+
+        private delegate int FillTwo(byte* first, int firstBytes, byte* second, int secondBytes);
+
+        // The façade reports a buffer it could not fill but not the size it
+        // wanted, so the answer is to ask again with more room. Lyrics and
+        // comment tags are the reason this is not a fixed 256 bytes; the cap
+        // is there so a corrupt length cannot turn into an allocation loop.
+        private const int MaxTextBytes = 1 << 20;
+
+        private static string ReadString(FillOne fill)
+        {
+            for (var capacity = 256; ; capacity *= 4)
+            {
+                var buffer = new byte[capacity];
+                int rc;
+                fixed (byte* pointer = buffer)
+                    rc = fill(pointer, capacity);
+
+                if (rc == Native.Truncated && capacity < MaxTextBytes)
+                    continue;
+                if (rc != Native.Ok)
+                    throw new DecodeException("Could not read a text field", rc);
+
+                return Text(buffer);
+            }
+        }
+
+        private static void ReadPair(FillTwo fill, out string first, out string second)
+        {
+            for (var capacity = 256; ; capacity *= 4)
+            {
+                var a = new byte[capacity];
+                var b = new byte[capacity];
+                int rc;
+                fixed (byte* pa = a)
+                fixed (byte* pb = b)
+                    rc = fill(pa, capacity, pb, capacity);
+
+                if (rc == Native.Truncated && capacity < MaxTextBytes)
+                    continue;
+                if (rc != Native.Ok)
+                    throw new DecodeException("Could not read a text field", rc);
+
+                first = Text(a);
+                second = Text(b);
+                return;
+            }
+        }
+
+        // Every string the façade writes is NUL-terminated, so the terminator
+        // rather than the buffer length is what says where it ends.
+        private static string Text(byte[] buffer)
+        {
+            fixed (byte* pointer = buffer)
+                return Marshal.PtrToStringUTF8((IntPtr)pointer) ?? "";
         }
 
         public void Dispose()

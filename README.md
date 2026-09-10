@@ -3,9 +3,11 @@
 A narrow, audio-only façade over FFmpeg's decode libraries, for .NET.
 
 Open a file or a `Stream`, ask what PCM it holds, read interleaved samples,
-seek, close. That is the whole of it — eight C functions over ints and byte
-buffers, and a small managed binding on top. `native/ffaudio.h` is the entire
-interface and is meant to be read in one sitting.
+seek, close — plus the handful of questions every consumer asks about a file
+it has just opened: its tags, its cover art, its channel layout, what codec
+and container it is. That is the whole of it: thirteen C functions over ints
+and byte buffers, and a small managed binding on top. `native/ffaudio.h` is
+the entire interface and is meant to be read in one sitting.
 
 ```csharp
 using FFAudio;
@@ -31,6 +33,48 @@ using var decoder = Decoder.OpenStream(await http.GetSeekableStreamAsync(url),
 
 var landed = decoder.Seek(TimeSpan.FromMinutes(2));   // at or before the request
 ```
+
+## What the file says
+
+Decoding is most of this library, but a caller that cannot ask the façade
+what a file *is* reaches past it into FFmpeg, and then has two routes to
+FFmpeg to build, ship and keep in step — which is the outcome the façade
+exists to prevent. So the cheap questions are answered here:
+
+```csharp
+foreach (var (key, value) in decoder.Tags)
+    Console.WriteLine($"{key} = {value}");        // "title", "artist", ...
+
+if (decoder.TryReadCoverArt() is { } art)
+    File.WriteAllBytes($"cover{Path.GetExtension(art.MimeType)}", art.Bytes);
+
+Console.WriteLine(decoder.Format.ChannelLayout);  // "stereo", "5.1(side)"
+Console.WriteLine(decoder.Format.Codec);          // "flac"
+Console.WriteLine(decoder.Format.Container);      // "flac"
+```
+
+Four things worth knowing about that surface:
+
+- **Tags are a list, not a dictionary.** A track really can carry two `ARTIST`
+  comments, and which one wins is the caller's policy rather than this
+  library's. Container-level tags come first, then the audio stream's own,
+  because where a format puts them is a property of the format — ID3 on the
+  container for an MP3, Vorbis comments on the stream for an Ogg.
+- **Cover art is the container's own bytes**, neither decoded nor rescaled:
+  that is a decision belonging to whatever is going to draw it. `null` when
+  there is none, which is the ordinary case and not a failure. It is a method
+  rather than a property because album art is routinely megabytes.
+- **`ChannelLayout` describes what `Read` delivers**, after any requested
+  down- or up-mix — not what the source held. `Channels` is a number, and a
+  number cannot say which channel is which.
+- **None of it allocates on the native side.** Strings and image bytes go into
+  caller-owned buffers; the managed binding retries with a larger one when the
+  façade reports it could not fit.
+
+These were additions rather than changes, so `FFAUDIO_ABI_VERSION` is still 1.
+Nothing moved: a library built before them fails at the first call to one with
+a missing symbol rather than an ABI mismatch, and while nothing has shipped
+that is the whole of what a version bump would have bought.
 
 ## Why this rather than the alternatives
 
@@ -418,6 +462,12 @@ test.
 | Windows | `ffaudio.dll` | Built on CI against a pinned LGPL download; never listened to on Windows |
 | iOS | `ffaudio.framework` per slice | Built; decode checks pass on the simulator and on a physical device |
 | Android | `libffaudio.so` per ABI | Built for all three ABIs; decode checks pass on an emulator |
+
+The metadata surface — tags, cover art, channel layout, codec and container
+names — is built and tested on macOS only so far. It is plain `avformat`
+dictionary and stream reading with no platform-specific path in it, so there
+is no particular reason to expect it to differ elsewhere, but CI has not yet
+run it anywhere else.
 
 Nothing is published to NuGet yet: the workflow and the versioning are in
 place, but no `v*` tag has been cut and no `NUGET_API_KEY` secret has been

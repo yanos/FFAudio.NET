@@ -26,6 +26,12 @@ struct ffaudio_decoder {
 
     ffaudio_decoder_format format;
 
+    // Kept rather than uninitialised at the end of finish_open, because it is
+    // the answer to ffaudio_decoder_channel_layout - the delivered layout,
+    // after any requested mix, which is the one a caller has to map channels
+    // against. swresample copies it, so holding on costs nothing.
+    AVChannelLayout out_layout;
+
     // What swresample is asked to produce, which is not always what the
     // caller gets: packed 24-bit is not one of swresample's formats, so S24
     // is converted as S32 and packed on the way out (see pack_s24).
@@ -286,14 +292,12 @@ static int finish_open(ffaudio_decoder *dec)
     int out_rate = dec->requested_rate > 0 ? dec->requested_rate : source_rate;
     int out_channels = dec->requested_channels > 0 ? dec->requested_channels : source_channels;
 
-    AVChannelLayout out_layout;
-    av_channel_layout_default(&out_layout, out_channels);
+    av_channel_layout_default(&dec->out_layout, out_channels);
 
     rc = swr_alloc_set_opts2(&dec->swr,
-                             &out_layout, dec->swr_format, out_rate,
+                             &dec->out_layout, dec->swr_format, out_rate,
                              &dec->codec->ch_layout, dec->codec->sample_fmt, source_rate,
                              0, NULL);
-    av_channel_layout_uninit(&out_layout);
     if (rc < 0)
         return rc;
 
@@ -596,9 +600,191 @@ FFAUDIO_API void ffaudio_decoder_close(ffaudio_decoder *decoder)
         av_freep(&decoder->avio->buffer);
         avio_context_free(&decoder->avio);
     }
+    av_channel_layout_uninit(&decoder->out_layout);
     av_freep(&decoder->scratch);
     av_freep(&decoder->pending);
     av_free(decoder);
+}
+
+
+// ------------------------------------------------------------------ metadata
+
+// Every string this façade hands back goes through here: caller-owned
+// storage, always NUL-terminated, never an allocation. A buffer too small is
+// reported rather than silently accepted, because a truncated codec name that
+// looks like a codec name is worse than an error.
+static int copy_string(char *buffer, int32_t buffer_bytes, const char *value)
+{
+    if (!buffer || buffer_bytes <= 0)
+        return FFAUDIO_OK;
+    if (!value)
+        value = "";
+
+    size_t length = strlen(value);
+    if (length >= (size_t)buffer_bytes) {
+        memcpy(buffer, value, (size_t)buffer_bytes - 1);
+        buffer[buffer_bytes - 1] = '\0';
+        return FFAUDIO_ERR_TRUNCATED;
+    }
+
+    memcpy(buffer, value, length + 1);
+    return FFAUDIO_OK;
+}
+
+// av_dict_get with an empty key and IGNORE_SUFFIX is FFmpeg's own iteration
+// idiom, and the portable one: av_dict_iterate is newer than some of the
+// FFmpeg builds this links against.
+static int dict_count(const AVDictionary *dict)
+{
+    int count = 0;
+    const AVDictionaryEntry *entry = NULL;
+    while ((entry = av_dict_get(dict, "", entry, AV_DICT_IGNORE_SUFFIX)) != NULL)
+        count++;
+    return count;
+}
+
+static const AVDictionaryEntry *dict_at(const AVDictionary *dict, int index)
+{
+    const AVDictionaryEntry *entry = NULL;
+    while ((entry = av_dict_get(dict, "", entry, AV_DICT_IGNORE_SUFFIX)) != NULL) {
+        if (index-- == 0)
+            return entry;
+    }
+    return NULL;
+}
+
+// The container's tags and the audio stream's own, in that order. Both,
+// because where a format puts them is a property of the format: an MP3's ID3
+// frames land on the container, an Ogg's Vorbis comments on the stream, and a
+// caller asking what a file says means neither of those distinctions.
+static const AVDictionary *tag_source(ffaudio_decoder *dec, int which)
+{
+    if (which == 0)
+        return dec->fmt->metadata;
+    return dec->fmt->streams[dec->stream_index]->metadata;
+}
+
+FFAUDIO_API int ffaudio_decoder_tag_count(ffaudio_decoder *decoder, int32_t *out_count)
+{
+    if (!decoder || !out_count)
+        return FFAUDIO_ERR_ARGUMENT;
+
+    *out_count = (int32_t)(dict_count(tag_source(decoder, 0))
+                         + dict_count(tag_source(decoder, 1)));
+    return FFAUDIO_OK;
+}
+
+FFAUDIO_API int ffaudio_decoder_tag_at(ffaudio_decoder *decoder,
+                                     int32_t index,
+                                     char *key, int32_t key_bytes,
+                                     char *value, int32_t value_bytes)
+{
+    if (!decoder || index < 0)
+        return FFAUDIO_ERR_ARGUMENT;
+
+    int container = dict_count(tag_source(decoder, 0));
+    const AVDictionaryEntry *entry = index < container
+        ? dict_at(tag_source(decoder, 0), index)
+        : dict_at(tag_source(decoder, 1), index - container);
+
+    if (!entry)
+        return FFAUDIO_ERR_NOT_PRESENT;
+
+    int rc = copy_string(key, key_bytes, entry->key);
+    int rc2 = copy_string(value, value_bytes, entry->value);
+    return rc != FFAUDIO_OK ? rc : rc2;
+}
+
+// FFmpeg models embedded art as a video stream flagged ATTACHED_PIC whose
+// whole content is one already-demuxed packet hanging off the stream, so
+// there is nothing to read or decode here - the bytes are simply present.
+static const AVStream *attached_picture(ffaudio_decoder *dec)
+{
+    for (unsigned i = 0; i < dec->fmt->nb_streams; i++) {
+        const AVStream *stream = dec->fmt->streams[i];
+        if ((stream->disposition & AV_DISPOSITION_ATTACHED_PIC) && stream->attached_pic.size > 0)
+            return stream;
+    }
+    return NULL;
+}
+
+static const char *picture_mime(const AVStream *stream)
+{
+    // The container may say so itself, and when it does it is more specific
+    // than anything derived from the codec id.
+    const AVDictionaryEntry *declared = av_dict_get(stream->metadata, "mimetype", NULL, 0);
+    if (declared && declared->value && declared->value[0])
+        return declared->value;
+
+    switch (stream->codecpar->codec_id) {
+        case AV_CODEC_ID_MJPEG:  return "image/jpeg";
+        case AV_CODEC_ID_PNG:    return "image/png";
+        case AV_CODEC_ID_BMP:    return "image/bmp";
+        case AV_CODEC_ID_GIF:    return "image/gif";
+        case AV_CODEC_ID_WEBP:   return "image/webp";
+        default:                 return "application/octet-stream";
+    }
+}
+
+FFAUDIO_API int ffaudio_decoder_cover_art(ffaudio_decoder *decoder,
+                                        uint8_t *buffer, int32_t buffer_bytes,
+                                        int32_t *out_bytes,
+                                        char *mime, int32_t mime_bytes)
+{
+    if (!decoder)
+        return FFAUDIO_ERR_ARGUMENT;
+
+    const AVStream *stream = attached_picture(decoder);
+    if (!stream)
+        return FFAUDIO_ERR_NOT_PRESENT;
+
+    int size = stream->attached_pic.size;
+    if (out_bytes)
+        *out_bytes = (int32_t)size;
+
+    int rc = copy_string(mime, mime_bytes, picture_mime(stream));
+
+    // Asking for the size and nothing else is the first half of the ordinary
+    // two-call sequence, so it is a success rather than a missing argument.
+    if (!buffer)
+        return rc;
+
+    // Nothing is written on a short buffer. Half a JPEG is not a smaller
+    // JPEG, and a caller handed one would have no way to tell.
+    if (buffer_bytes < size)
+        return FFAUDIO_ERR_TRUNCATED;
+
+    memcpy(buffer, stream->attached_pic.data, (size_t)size);
+    return rc;
+}
+
+FFAUDIO_API int ffaudio_decoder_channel_layout(ffaudio_decoder *decoder,
+                                             char *buffer, int32_t buffer_bytes)
+{
+    if (!decoder || !buffer || buffer_bytes <= 0)
+        return FFAUDIO_ERR_ARGUMENT;
+
+    // Describes into the caller's buffer directly, and reports its own
+    // truncation the same way copy_string does.
+    int rc = av_channel_layout_describe(&decoder->out_layout, buffer, (size_t)buffer_bytes);
+    if (rc < 0)
+        return rc;
+    return rc > buffer_bytes ? FFAUDIO_ERR_TRUNCATED : FFAUDIO_OK;
+}
+
+FFAUDIO_API int ffaudio_decoder_names(ffaudio_decoder *decoder,
+                                    char *codec, int32_t codec_bytes,
+                                    char *container, int32_t container_bytes)
+{
+    if (!decoder)
+        return FFAUDIO_ERR_ARGUMENT;
+
+    const char *codec_name = avcodec_get_name(decoder->codec->codec_id);
+    const char *container_name = decoder->fmt->iformat ? decoder->fmt->iformat->name : NULL;
+
+    int rc = copy_string(codec, codec_bytes, codec_name);
+    int rc2 = copy_string(container, container_bytes, container_name);
+    return rc != FFAUDIO_OK ? rc : rc2;
 }
 
 FFAUDIO_API void ffaudio_error_string(int code, char *buffer, int32_t buffer_bytes)
@@ -615,6 +801,8 @@ FFAUDIO_API void ffaudio_error_string(int code, char *buffer, int32_t buffer_byt
         case FFAUDIO_ERR_NO_MEMORY: own = "out of memory"; break;
         case FFAUDIO_ERR_ABI:       own = "abi version mismatch"; break;
         case FFAUDIO_ERR_IO:        own = "stream does not support seeking"; break;
+        case FFAUDIO_ERR_NOT_PRESENT: own = "this file does not carry that"; break;
+        case FFAUDIO_ERR_TRUNCATED: own = "the buffer given was too small"; break;
         default: break;
     }
 
