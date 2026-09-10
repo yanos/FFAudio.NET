@@ -82,17 +82,25 @@ if [ -n "${FFAUDIO_STATIC:-}" ]; then
 fi
 
 # What this binary will ask a consumer's machine for. Under FFAUDIO_STATIC
-# anything here beyond libc, libm and libdl is a file that will not be there
-# after a NuGet restore.
+# anything here beyond the base system is a file that will not be there after a
+# NuGet restore.
+#
+# zlib is on the allowed list rather than linked in, and that is the same
+# answer macOS gives - there it is /usr/lib/libz.1.dylib, here libz.so.1.
+# FFmpeg wants it for compressed Matroska track headers, every glibc
+# distribution ships it, and Debian's own libz.a is not reliably built for
+# linking into a shared library. A dependency the OS already guarantees is not
+# the problem this mode exists to solve; an absolute path into /opt/homebrew
+# was.
 echo "=== Needs ==="
 { readelf -d "$out/libffaudio.so" 2>/dev/null || objdump -p "$out/libffaudio.so"; } | grep -i 'NEEDED' || true
 
 if [ -n "${FFAUDIO_STATIC:-}" ]; then
     strays="$({ readelf -d "$out/libffaudio.so" 2>/dev/null || objdump -p "$out/libffaudio.so"; } |
         grep -i 'NEEDED' |
-        grep -vE 'libc\.so|libm\.so|libdl\.so|libpthread\.so|librt\.so|ld-linux' || true)"
+        grep -vE 'libc\.so|libm\.so|libdl\.so|libpthread\.so|librt\.so|libz\.so|ld-linux' || true)"
     if [ -n "$strays" ]; then
-        echo "!! a static build should depend on nothing but libc, and this one wants:" >&2
+        echo "!! a static build should depend on nothing but the base system, and this one wants:" >&2
         echo "$strays" >&2
         exit 1
     fi
