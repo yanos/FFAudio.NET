@@ -16,3 +16,5 @@ native/artifacts/
 native/*/build/
 native/ios/ffmpeg/
 native/android/ffmpeg/
+native/macos/ffmpeg/
+native/linux/ffmpeg/

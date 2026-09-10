@@ -242,6 +242,57 @@ newest APIs `ffaudio.c` uses. It was briefly 7.x, which was not a requirement
 but the version of the machine it was first built on, and it kept the Linux
 build from finding Ubuntu 24.04's FFmpeg 6 at all.
 
+#### The shipping build is a different build
+
+```
+FFAUDIO_STATIC=1 native/macos/build.sh
+sudo apt-get install -y nasm
+FFAUDIO_STATIC=1 native/linux/build.sh
+```
+
+What is above is right for a developer and wrong for a package. Linking the
+FFmpeg already on the machine means the façade records where it found it — an
+absolute `/opt/homebrew/opt/ffmpeg/lib/libavformat.63.dylib` in its own load
+commands, or a soname the distro owns. Copy that into a NuGet, restore it on a
+machine whose FFmpeg came from somewhere else, and nothing loads. There is no
+link error and no warning; every decode simply fails, on every machine except
+the one that built it.
+
+That is not hypothetical. It is what the first real consumer of
+`FFAudio.NET.macOS` hit, on a Mac running MacPorts against a package CI had
+built against Homebrew, and it is why this mode exists.
+
+`FFAUDIO_STATIC=1` builds the desktop the way the phones are already built.
+`native/host-ffmpeg.sh` configures a `--disable-everything` LGPL FFmpeg from
+source — the same `codec-set.sh` list both phones use, so what a track decodes
+into does not depend on which platform is asking — and `CMakeLists.txt` links
+it in. What comes out depends on libSystem, or on libc and libz, and on
+nothing else; both scripts end by asserting exactly that, because a stray
+dependency is invisible until it is somebody else's failure.
+
+Two things it drags in with it. `--disable-autodetect`, so configure cannot
+link whatever development packages happen to be installed beside it — every
+one of those is another absolute path, and turning them off is also what makes
+the build reproducible. And export narrowing: `CMAKE_C_VISIBILITY_PRESET
+hidden` is enough while FFmpeg is a separate library, but link it in and its
+symbols are *in* this binary, in their thousands, none of them hidden. So the
+static build gets an `-exported_symbols_list` on Apple and an ELF version
+script elsewhere, derived from the header's own `FFAUDIO_API` lines — the same
+narrowing `ios/build.sh` and `android/build.sh` already do in their own
+scripts, and the reason the export macro is on the functions and on nothing
+else. The build fails if that derivation ever comes back empty.
+
+Slow the first time (tens of minutes of libavcodec) and a relink after: the
+prefix lives under `native/<platform>/ffmpeg/prefix/<variant>/<arch>/` and is
+left alone unless `FFAUDIO_REBUILD_FFMPEG` is set. CI caches it on the
+script's own hash and asks for this mode; a developer editing `ffaudio.c`
+should not.
+
+CI keeps building both. The default path is what every developer uses, so a
+job that only built statically would stop compiling it — and the artifact that
+gets packed is the static one, after the decode checks have been run against
+it a second time. A binary that ships should be one that decoded something.
+
 ### Windows
 
 ```
@@ -260,6 +311,16 @@ Five DLLs come out rather than one: `ffaudio.dll` imports avformat, avcodec,
 avutil and swresample, so those four are copied beside it. avdevice, avfilter
 and swscale are in the download and are deliberately not linked — an unused
 import is a DLL that would then have to be shipped and kept replaceable.
+
+Which is also why Windows has no `FFAUDIO_STATIC` and needs none: those four
+DLLs are packed into `runtimes/win-x64/native/` beside the façade, so the
+payload already carries its own FFmpeg and already resolves it beside the
+binary rather than from an absolute path. That is the portability the other
+two desktops had to link statically to get, and the licence obligation is
+easier to meet in this shape rather than harder — the libraries are separate
+and replaceable by construction. A static MSVC FFmpeg would be a worse answer
+to a question Windows does not have, which is the honest version of what
+`docs/DECODER-LIBRARY-PLAN.md` calls the unscoped Windows half.
 
 ### iOS
 
@@ -325,9 +386,19 @@ The façade and the managed binding are **Apache-2.0** (see `LICENSE`).
 
 FFmpeg is **LGPL** and may be linked only as such. Any build that ships must be
 configured without `--enable-gpl` and without `--enable-nonfree`, must carry the
-corresponding source offer, and must keep the FFmpeg libraries replaceable —
-dynamically linked on desktop; on mobile, where they are linked in, an
-equivalent relink route has to be offered. See `NOTICE`.
+corresponding source offer, and must keep the FFmpeg libraries replaceable.
+
+Windows keeps them replaceable directly: four DLLs beside the façade, any of
+which can be swapped for another build of the same soname. Everywhere else —
+both phones, and now macOS and Linux under `FFAUDIO_STATIC` — FFmpeg is linked
+in, and what has to be offered instead is a genuine relink route: the exact
+version, the exact configure line, and scripts that reproduce the shipped
+binary. `native/host-ffmpeg.sh` and the two `build-ffmpeg.sh` scripts are that
+route, and `FFmpegBuild.Configuration` reads the configure line back out of the
+artifact itself, which is the part a script cannot promise. See `NOTICE`.
+
+**None of that is a licence read.** It is the constraint as this repo
+understands it, and the read still has to happen before anything is published.
 
 ### Asking the binary rather than the build
 
@@ -600,8 +671,8 @@ test.
 
 | Platform | Artifact | Status |
 |---|---|---|
-| macOS | `libffaudio.dylib` | Built against MacPorts FFmpeg; in daily real listening |
-| Linux | `libffaudio.so` | Built on CI; never built on a Linux machine by hand |
+| macOS | `libffaudio.dylib` | Built against MacPorts FFmpeg; in daily real listening. `FFAUDIO_STATIC=1` builds the portable one CI packs |
+| Linux | `libffaudio.so` | Built on CI; never built on a Linux machine by hand, and the static mode has never run outside CI |
 | Windows | `ffaudio.dll` | Built on CI against a pinned LGPL download; never listened to on Windows |
 | iOS | `ffaudio.framework` per slice | Built; decode checks pass on the simulator and on a physical device |
 | Android | `libffaudio.so` per ABI | Built for all three ABIs; decode checks pass on an emulator |

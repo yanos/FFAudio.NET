@@ -27,6 +27,17 @@
 #     FFAUDIO_REBUILD_FFMPEG=1 native/build-all.sh   # rebuild the mobile FFmpeg too
 #     FFAUDIO_VARIANT=full native/build-all.sh ios    # every audio decoder, not the
 #                                                    # music-library list
+#     FFAUDIO_STATIC=1 native/build-all.sh macos     # link FFmpeg in, the way a
+#                                                    # shipped desktop build must
+#
+# FFAUDIO_STATIC=1 changes what macos and linux mean, and nothing else. By
+# default those two link the FFmpeg already on the machine, which is the right
+# trade for a developer and the wrong one for a package: the resulting binary
+# names an absolute path in /opt/homebrew or a distro soname, and a package is
+# a binary that gets restored somewhere else. Under FFAUDIO_STATIC they build
+# their own LGPL FFmpeg (host-ffmpeg.sh) and link it in, like the phones. It is
+# tens of minutes the first time and a relink after, so CI asks for it and a
+# developer generally should not.
 #
 # The mobile targets each cross-compile FFmpeg itself first (build-ffmpeg.sh),
 # which is tens of minutes the first time. Both of those are idempotent - an

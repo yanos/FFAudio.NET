@@ -118,6 +118,63 @@ jobs:
       - name: Run the checks as an app
         run: dotnet run --project checks/FFAudio.Checks.Desktop --configuration Release
 
+      # Everything above builds against the FFmpeg this runner happens to have,
+      # which is the right thing to test and the wrong thing to ship. A dylib
+      # linked against Homebrew records /opt/homebrew/opt/ffmpeg/lib in its own
+      # load commands, and an .so linked against apt's records a soname the
+      # distro owns; copied into a NuGet and restored on a machine without that
+      # exact FFmpeg, neither one loads. That is not hypothetical - it is what
+      # the first real consumer of FFAudio.NET.macOS hit, on a Mac whose FFmpeg
+      # came from MacPorts.
+      #
+      # So the artifact this job uploads is built a second time, statically,
+      # against an LGPL FFmpeg the repo builds itself - and the checks are run
+      # again against *that*, because the binary a package ships should be one
+      # that decoded something. The first build is not wasted: linking the
+      # system FFmpeg is the path every developer uses, and a job that only
+      # built statically would stop compiling it.
+      #
+      # Windows is already in this shape without any of it: its FFmpeg is a
+      # pinned LGPL download whose four DLLs are copied beside the façade and
+      # packed with it, so the payload is self-contained and the libraries stay
+      # replaceable. A static MSVC FFmpeg would be a worse answer to a question
+      # Windows does not have.
+      - name: Cache the static FFmpeg
+        if: runner.os != 'Windows'
+        uses: actions/cache@v4
+        with:
+          path: |
+            native/macos/ffmpeg/prefix
+            native/linux/ffmpeg/prefix
+          key: ffmpeg-host-${{ runner.os }}-${{ hashFiles('native/host-ffmpeg.sh', 'native/codec-set.sh') }}
+
+      # FFmpeg's x86 assembly needs an external assembler and configure refuses
+      # to guess one. The macOS runner is arm64, where the toolchain's own
+      # assembler is enough.
+      - name: Install nasm (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get install -y nasm
+
+      - name: Build the shipping native (Linux)
+        if: runner.os == 'Linux'
+        run: FFAUDIO_STATIC=1 native/linux/build.sh
+
+      - name: Build the shipping native (macOS)
+        if: runner.os == 'macOS'
+        run: FFAUDIO_STATIC=1 native/macos/build.sh
+
+      # The same checks, against the binary that is about to be packed - and
+      # this time the licence gate is on. It could not be before: apt's and
+      # brew's FFmpeg are GPL-enabled, which is why only Windows was ever held
+      # to it. A build the repo configured itself has no such excuse, and
+      # asking the binary rather than the build is the whole point of
+      # FFmpegBuild - a configure line does not travel inside a NuGet.
+      - name: Run the checks against the shipping native
+        if: runner.os != 'Windows'
+        run: dotnet run --project checks/FFAudio.Checks.Desktop --configuration Release
+        env:
+          FFAUDIO_REQUIRE_LGPL: 1
+
       # The façade this job just proved decodes, downloadable from the run.
       #
       # Nothing downstream consumes these yet: the package carries the
