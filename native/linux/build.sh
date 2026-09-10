@@ -26,6 +26,6 @@ echo "built $out/libffaudio.so"
 
 # The same sanity check the macOS script ends on: eight exported symbols and
 # no more, because a façade that exported FFmpeg's own would be a second way
-# to reach it. Nothing loads the library here - that is FfmpegDecoder's
+# to reach it. Nothing loads the library here - that is Decoder's
 # IsAvailable probe, which the decode checks run for real.
 nm -D --defined-only "$out/libffaudio.so" | grep ffaudio_ || true

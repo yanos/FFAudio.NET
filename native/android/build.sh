@@ -21,7 +21,7 @@ build="$here/build"
 prefixes="$here/ffmpeg/prefix"
 api=21
 
-# Must match FfmpegNative.Library, which is the literal DllImport string. Named
+# Must match Native.Library, which is the literal DllImport string. Named
 # libffaudio.so so Android's own loader finds it in the APK with no
 # DllImportResolver help - unlike iOS, where an embedded framework's nested
 # path has to be named explicitly.

@@ -8,7 +8,7 @@ namespace FFAudio.Tests;
 //
 // A `using var decoder` going out of scope does not always mean the fixture
 // file is closed yet: a caller is free to close the native decoder on a
-// background task, and Flower's does exactly that, because joining a decode
+// background task - a player does exactly that, because joining a decode
 // thread mid-read of a slow network stream would stall its UI.
 //
 // On macOS and Linux that costs nothing: unlink on an open file succeeds and

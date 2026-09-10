@@ -101,7 +101,7 @@ Copy-Item (Join-Path $build "$Configuration/ffaudio.dll") $out -Force
 # The four the façade imports, and only those - the prefix also holds
 # avdevice, avfilter and swscale, which nothing here calls. They go beside the
 # façade rather than anywhere on PATH because that is where its own loader
-# finds them: FfmpegNative.Resolve loads ffaudio.dll by full path, and
+# finds them: Native.Resolve loads ffaudio.dll by full path, and
 # Windows then searches the directory it came out of for its dependencies.
 foreach ($component in @("avformat", "avcodec", "avutil", "swresample")) {
     Get-ChildItem -Path (Join-Path $Prefix "bin/$component-*.dll") | Copy-Item -Destination $out -Force

@@ -26,7 +26,7 @@ build="$here/build"
 prefixes="$here/ffmpeg/prefix"
 deployment_target=12.2
 
-# Must match FfmpegNative.Library, which is the literal DllImport string.
+# Must match Native.Library, which is the literal DllImport string.
 framework=ffaudio
 
 if [ ! -f "$prefixes/ios-device/lib/libavformat.a" ]; then
