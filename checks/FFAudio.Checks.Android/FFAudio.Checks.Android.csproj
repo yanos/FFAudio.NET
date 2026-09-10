@@ -1,0 +1,60 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- A check runner, not an app, and deliberately the twin of
+       FFAudio.Checks.iOS: the two runs are only worth comparing if the only
+       difference between them is the platform, so when they disagree the
+       disagreement is the finding.
+
+       It launches, runs FFAudio.Checks against the real Android runtime,
+       writes one line per check and a final tally, and leaves the same text
+       on screen so a run on a physical phone is readable without a cable.
+       scripts/android-device-checks.sh drives it on an emulator and turns the
+       tally into an exit code. -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0-android</TargetFramework>
+    <SupportedOSPlatformVersion>23</SupportedOSPlatformVersion>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+    <RootNamespace>FFAudio.Checks.Android</RootNamespace>
+    <ApplicationId>com.yanos.ffaudio.checks</ApplicationId>
+    <ApplicationVersion>1</ApplicationVersion>
+    <AndroidPackageFormat>apk</AndroidPackageFormat>
+    <AndroidEnableProfiledAot>False</AndroidEnableProfiledAot>
+
+    <!-- Fast Deployment off, in every configuration. It keeps the managed
+         assemblies out of the APK and pushes them over adb as a separate
+         step, which `dotnet build -t:Run` does and `adb install` does not -
+         so a hand-installed Debug APK aborts at startup with "No assemblies
+         found ... Assuming this is part of Fast Deployment". The driver
+         script installs the APK itself, deliberately, so that what runs is
+         the artifact rather than a developer's working tree. -->
+    <EmbedAssembliesIntoApk>true</EmbedAssembliesIntoApk>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\FFAudio.Checks\FFAudio.Checks.csproj" />
+  </ItemGroup>
+
+  <!-- The façade, one .so per ABI. This is the whole reason an Android run
+       checks anything: without it Native.Resolve finds nothing, the first
+       check fails and the rest are not attempted.
+
+       All three ABIs, because which one is exercised is a property of the
+       hardware rather than a choice: an emulator on Apple silicon is
+       arm64-v8a, one on a CI runner is x86_64, and armeabi-v7a is what an
+       older phone would load. Built by native/android/build.sh. -->
+  <ItemGroup>
+    <AndroidNativeLibrary Include="..\..\native\artifacts\android\arm64-v8a\libffaudio.so">
+      <Abi>arm64-v8a</Abi>
+    </AndroidNativeLibrary>
+    <AndroidNativeLibrary Include="..\..\native\artifacts\android\x86_64\libffaudio.so">
+      <Abi>x86_64</Abi>
+    </AndroidNativeLibrary>
+    <AndroidNativeLibrary Include="..\..\native\artifacts\android\armeabi-v7a\libffaudio.so">
+      <Abi>armeabi-v7a</Abi>
+    </AndroidNativeLibrary>
+  </ItemGroup>
+
+</Project>

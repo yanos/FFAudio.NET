@@ -6,8 +6,8 @@ name: CI
 # only repeat them and hope the second answer matches the first. Chained here,
 # the package that reaches nuget.org is the exact file a green run produced.
 #
-#     push / PR       test on three desktops, cross-compile for two phones,
-#                     then pack behind all five
+#     push / PR       test on three desktops, run the same checks on an iOS
+#                     simulator and an Android emulator, then pack behind all five
 #     push of v*      the same, and then publish what was packed
 #
 # A version is a decision, and `git tag v1.2.3` followed by pushing the tag is
@@ -114,30 +114,38 @@ jobs:
           path: native/artifacts/
           if-no-files-found: error
 
-  # The phones are a build and not a test, and the asymmetry is the repo's, not
-  # an oversight here: FFAudio.NET is one net10.0 library and one net10.0 test
-  # project, so there is no iOS or Android head for a test to run inside. What
-  # can be checked on every push is that the façade still cross-compiles and
-  # still links against a static FFmpeg, which is where it actually breaks -
-  # the C is shared, but the toolchain, the sysroot and the link line are not.
+  # The phones run the checks, on a simulator and an emulator.
   #
-  # Proving these decode needs a runner head per platform driven by a script
-  # per platform, on a simulator and an emulator. That is a real piece of work
-  # and it is not here yet.
+  # A cross-compile alone would not be worth much here. Three things this
+  # library depends on are green at link time and fatal at launch, and none of
+  # them can fail on a desktop: Native.Resolve's iOS branch loading the façade
+  # by hand out of Frameworks/ffaudio.framework, the UnmanagedCallersOnly read
+  # and seek trampolines OpenStream hands to FFmpeg being AOT-compiled rather
+  # than JITted, and libffaudio.so loading out of an APK for whichever ABI the
+  # hardware is. So these jobs build the native, build a runner app around it,
+  # launch it, and read back the tally it wrote - which is what the two
+  # scripts in scripts/ do, unchanged from how they run on a developer's Mac.
   #
-  # The expensive half is FFmpeg itself: build-ffmpeg.sh cross-compiles it from
-  # source, which is tens of minutes across two iOS slices or three Android
-  # ABIs. Both scripts are idempotent - a prefix with a libavformat.a in it is
-  # left alone - so caching the prefix makes every run after the first just the
-  # façade, which is one translation unit. The key is the script's own hash,
-  # because the FFmpeg version and the decoder list are both in it: change
-  # either and the cache misses, which is exactly right.
+  # The expensive half is FFmpeg itself: build-ffmpeg.sh cross-compiles it
+  # from source, which is tens of minutes across two iOS slices or three
+  # Android ABIs. Both scripts are idempotent - a prefix with a libavformat.a
+  # in it is left alone - so caching the prefix makes every run after the
+  # first just the façade, which is one translation unit. The key is the
+  # script's own hash, because the FFmpeg version and the decoder list are
+  # both in it: change either and the cache misses, which is exactly right.
   ios:
-    name: Build (iOS)
+    name: Checks (iOS Simulator)
     runs-on: macos-latest
 
     steps:
       - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Install the iOS workload
+        run: dotnet workload install ios
 
       - name: Cache the cross-compiled FFmpeg
         uses: actions/cache@v4
@@ -151,6 +159,13 @@ jobs:
       - name: Build ffaudio
         run: native/ios/build.sh
 
+      # Builds the runner, installs it on a simulator, launches it and turns
+      # the tally into an exit code. The transcript is printed either way -
+      # a run that produced no tally prints what there was instead, because
+      # "the app wrote nothing" and "six checks failed" are different findings.
+      - name: Run the checks
+        run: scripts/ios-device-checks.sh
+
       - uses: actions/upload-artifact@v4
         with:
           name: ffaudio-iOS
@@ -158,11 +173,18 @@ jobs:
           if-no-files-found: error
 
   android:
-    name: Build (Android)
+    name: Checks (Android emulator)
     runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Install the Android workload
+        run: dotnet workload install android
 
       - name: Cache the cross-compiled FFmpeg
         uses: actions/cache@v4
@@ -181,6 +203,32 @@ jobs:
         run: |
           export ANDROID_NDK_HOME="$ANDROID_NDK_LATEST_HOME"
           native/android/build.sh
+
+      # An x86_64 emulator needs nested virtualisation, and the runner has KVM
+      # but does not hand it to an unprivileged process by default. Without
+      # this the emulator falls back to software rendering of the whole CPU
+      # and times out rather than failing.
+      - name: Let the emulator use KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      # The action owns the emulator's lifecycle and the script is told to use
+      # it rather than start one of its own - two `emulator` processes
+      # fighting over the same AVD lock is a failure with no useful error.
+      # x86_64 here where a developer's Mac is arm64-v8a, which is the point
+      # of packaging all three ABIs: which one gets exercised is a property of
+      # the hardware, so between the two places these run, two of them do.
+      - name: Run the checks
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 30
+          arch: x86_64
+          target: default
+          emulator-options: -no-window -no-audio -no-boot-anim -no-snapshot-load -gpu swiftshader_indirect
+          script: FFAUDIO_ANDROID_SERIAL=emulator-5554 scripts/android-device-checks.sh
 
       - uses: actions/upload-artifact@v4
         with:

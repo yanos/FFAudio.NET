@@ -3,7 +3,7 @@ using System.Buffers.Binary;
 using System.IO;
 using System.Text;
 
-namespace FFAudio.Tests;
+namespace FFAudio.Checks;
 
 // 24-bit PCM WAV at an arbitrary sample rate.
 //

@@ -16,5 +16,10 @@
 
   <ItemGroup>
     <ProjectReference Include="../../src/FFAudio.NET/FFAudio.NET.csproj" />
+    <!-- For SyntheticHiResWav, which lives there rather than here because the
+         phones need it too and a fixture generated in-process is the only
+         kind a phone can have - there is no encoder on the other side to make
+         one with. -->
+    <ProjectReference Include="../../checks/FFAudio.Checks/FFAudio.Checks.csproj" />
   </ItemGroup>
 </Project>

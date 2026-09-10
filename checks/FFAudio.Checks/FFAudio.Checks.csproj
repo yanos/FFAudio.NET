@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The checks a phone can run. Same question as FFAudio.Tests asks - does
+       this platform turn a file into the right samples? - answered on the
+       platform in question rather than on a developer's Mac.
+
+       It carries no test framework on purpose. xUnit needs a host process to
+       discover and run it, and on iOS and Android there is no such host: what
+       runs there is an app. So a check is a method that throws, a runner is a
+       loop, and the two heads beside this project are the smallest apps that
+       can call RunAll and write down what came back.
+
+       Nothing here plays audio, opens a socket or draws anything. Every
+       dependency this does not have is one that cannot explain a failure. -->
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/FFAudio.NET/FFAudio.NET.csproj" />
+  </ItemGroup>
+
+</Project>

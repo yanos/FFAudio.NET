@@ -1,0 +1,60 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- A check runner, not an app. It launches, runs FFAudio.Checks against
+       the real iOS runtime, prints one line per check and a final tally, and
+       leaves the same text on screen so a run on a physical device is
+       readable without a cable. scripts/ios-device-checks.sh drives it on a
+       simulator and turns the tally into an exit code.
+
+       No UI framework beyond a UITextView and nothing that plays audio: what
+       is under test is decoding, and every dependency this does not have is
+       one that cannot explain a failure. -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0-ios</TargetFramework>
+    <SupportedOSPlatformVersion>12.2</SupportedOSPlatformVersion>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+    <RootNamespace>FFAudio.Checks.iOS</RootNamespace>
+    <ApplicationId>com.yanos.ffaudio.checks</ApplicationId>
+    <ApplicationVersion>1</ApplicationVersion>
+
+    <!-- Simulator by default: this is run from a script far more often than
+         from a device, and a simulator build needs no signing. A device run
+         is `-r ios-arm64`, which is also the only configuration where the
+         AOT-compiled trampolines are the ones a shipped app would use. -->
+    <RuntimeIdentifier Condition="'$(RuntimeIdentifier)' == ''">iossimulator-arm64</RuntimeIdentifier>
+    <ProvisioningType Condition="'$(RuntimeIdentifier)' == 'ios-arm64'">automatic</ProvisioningType>
+    <ProvisioningType Condition="'$(RuntimeIdentifier)' != 'ios-arm64'">manual</ProvisioningType>
+
+    <!-- UIWindow is obsolete from iOS 26 in favour of UIWindowScene, which
+         wants a scene manifest and a delegate this runner has no use for.
+         What is under test is decoding; the window exists so a person holding
+         a phone can read the tally. -->
+    <NoWarn>$(NoWarn);CA1422</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\FFAudio.Checks\FFAudio.Checks.csproj" />
+  </ItemGroup>
+
+  <!-- The façade, embedded as a framework. This is the whole reason an iOS
+       run checks anything: without it Native.Resolve finds nothing, the first
+       check fails and the rest are not attempted.
+
+       Two slices because they are not interchangeable - a simulator binary
+       will not load on a device and the reverse is worse, since it links.
+       Built by native/ios/build.sh into native/artifacts/ios/. -->
+  <ItemGroup Condition="$(RuntimeIdentifier.StartsWith('iossimulator'))">
+    <NativeReference Include="..\..\native\artifacts\ios\ios-simulator\ffaudio.framework">
+      <Kind>Framework</Kind>
+    </NativeReference>
+  </ItemGroup>
+  <ItemGroup Condition="!$(RuntimeIdentifier.StartsWith('iossimulator'))">
+    <NativeReference Include="..\..\native\artifacts\ios\ios-device\ffaudio.framework">
+      <Kind>Framework</Kind>
+    </NativeReference>
+  </ItemGroup>
+
+</Project>

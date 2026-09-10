@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+	<!-- Nothing else. These checks read a file they wrote themselves into the
+	     app's own temp directory and decode it - no network, no storage
+	     permission, no audio output. A runner that needs no permissions is a
+	     runner whose failures are about decoding. -->
+	<application android:label="FFAudio checks" />
+</manifest>

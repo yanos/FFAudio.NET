@@ -5,4 +5,7 @@
   <Folder Name="/tests/">
     <Project Path="tests/FFAudio.Tests/FFAudio.Tests.csproj" />
   </Folder>
+  <Folder Name="/checks/">
+    <Project Path="checks/FFAudio.Checks/FFAudio.Checks.csproj" />
+  </Folder>
 </Solution>

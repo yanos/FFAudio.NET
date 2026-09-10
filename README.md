@@ -231,6 +231,62 @@ dotnet test --filter "Category!=RequiresNative"      # without one
 They decode real files through real FFmpeg. There are no mocks in here worth
 having: the claims are about bytes.
 
+## Device checks
+
+The same question — *does this platform turn a file into the right samples?* —
+asked on a phone rather than on a developer's Mac.
+
+```
+dotnet test --filter FullyQualifiedName~DeviceChecksTests   # here
+scripts/ios-device-checks.sh                                # iOS Simulator
+scripts/android-device-checks.sh                            # Android emulator
+```
+
+Three things this library depends on are green at link time and fatal at
+launch, and not one of them can fail on a desktop:
+
+- **`Native.Resolve`'s iOS branch**, which loads the façade by hand out of
+  `Frameworks/ffaudio.framework` because .NET-for-iOS resolves a P/Invoke by
+  `dlopen`-ing the `DllImport` string, and that matches nothing there. The
+  resolver is registered from a `[ModuleInitializer]` rather than a static
+  constructor because Mono resolves the library for a stub *before* running
+  the declaring type's cctor — so it was once registered by the very call that
+  had already thrown `DllNotFoundException`. The library loaded fine when
+  asked directly; nothing was ever asking.
+- **The read and seek trampolines** `OpenStream` hands FFmpeg, compiled ahead
+  of time on a phone rather than JITted. A mistake there is a crash at the
+  first callback, not a compile error.
+- **`libffaudio.so` loading out of an APK**, for whichever ABI the hardware
+  turns out to be.
+
+So `checks/FFAudio.Checks` carries no test framework — xUnit needs a host
+process to discover and run it, and on iOS and Android what runs is an app. A
+check is a method that throws, the runner is a loop, and
+`checks/FFAudio.Checks.iOS` and `checks/FFAudio.Checks.Android` are the
+smallest apps that can call `RunAll` and write down what came back: no audio
+output, no network, and no UI beyond a text view. Every dependency they do not
+have is one that cannot explain a failure.
+
+They are written to be twins, reporting the same `FFAUDIO-CHECK` /
+`FFAUDIO-CHECKS` lines under the same prefixes, because two platform runs are
+only worth comparing when the one difference between them is the platform.
+Each writes its transcript to a **file** in its own container rather than to
+the obvious console: `Console.WriteLine` from a .NET iOS app does not reliably
+reach `simctl launch --console-pty`, and logcat is a ring buffer shared with
+the whole system, so a chatty emulator drops lines out of the middle of a long
+one. A run that decoded everything and reported two thirds of its tally is
+indistinguishable from a failing one.
+
+The checks also run on every desktop, as `DeviceChecksTests`. A check that is
+only ever exercised on a phone is one nobody can trust, because a failure
+there would be ambiguous between the platform and the check itself — running
+them here first means a red simulator run says something about the simulator.
+
+Which ABI an Android run exercises is a property of the host: `arm64-v8a` on a
+developer's Mac, `x86_64` on a CI runner. Both `.so`s are packaged, along with
+`armeabi-v7a`, so between the two places these run, two of the three get
+exercised.
+
 ## Versioning and releasing
 
 There is no version number written down anywhere. MinVer derives it from git
@@ -319,20 +375,17 @@ Without one, `Decoder.OpenPath` throws `DllNotFoundException` out of
 for it to call.
 
 `.github/workflows/ci.yml` builds the façade and runs the suite against it on
-all three desktops on every push, cross-compiles it for iOS and Android
-alongside them, and packs once behind all five — so a commit that stopped
+all three desktops on every push, runs the device checks on an iOS Simulator
+and an Android emulator alongside them, and packs once behind all five — so a commit that stopped
 compiling on Windows, or stopped cross-compiling for a phone, produces no
 package at all. That pre-release package is a downloadable artifact of the
 run, so a commit can be tried before anyone decides to tag it, and packaging
 never breaks for the first time during a release.
 
-The phones are a build and not a test, and that asymmetry is this repo's
-rather than CI's: there is one `net10.0` library and one `net10.0` test
-project here, so there is no iOS or Android head for a test to run inside.
-What every push does check is the part that actually breaks — the toolchain,
-the sysroot and the link line differ per platform even though the C does not.
-Proving a phone *decodes* needs a runner head and a driving script per
-platform, on a simulator and an emulator, and that is not written yet.
+The phones are not only cross-compiled: CI boots an iOS Simulator and an
+Android emulator and runs the checks on them, the same way `scripts/` does on
+a developer's Mac. See **Device checks** for what that catches that a
+cross-compile cannot.
 
 The expensive half of a mobile job is FFmpeg itself: `build-ffmpeg.sh`
 cross-compiles it from source, tens of minutes across two iOS slices or three
