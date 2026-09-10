@@ -180,6 +180,15 @@ namespace FFAudio
                                                 byte* codec, int codecBytes,
                                                 byte* container, int containerBytes);
 
+        [DllImport(Library, EntryPoint = "ffaudio_ffmpeg_license", CallingConvention = CallingConvention.Cdecl)]
+        internal static extern unsafe int FfmpegLicense(byte* buffer, int bufferBytes);
+
+        [DllImport(Library, EntryPoint = "ffaudio_ffmpeg_configuration", CallingConvention = CallingConvention.Cdecl)]
+        internal static extern unsafe int FfmpegConfiguration(byte* buffer, int bufferBytes);
+
+        [DllImport(Library, EntryPoint = "ffaudio_ffmpeg_version", CallingConvention = CallingConvention.Cdecl)]
+        internal static extern unsafe int FfmpegVersion(byte* buffer, int bufferBytes);
+
         [DllImport(Library, EntryPoint = "ffaudio_error_string", CallingConvention = CallingConvention.Cdecl)]
         internal static extern unsafe void ErrorString(int code, byte* buffer, int bufferBytes);
 

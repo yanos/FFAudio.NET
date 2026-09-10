@@ -1,5 +1,6 @@
 #include "ffaudio.h"
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -817,4 +818,31 @@ FFAUDIO_API void ffaudio_error_string(int code, char *buffer, int32_t buffer_byt
 FFAUDIO_API int32_t ffaudio_abi_version(void)
 {
     return FFAUDIO_ABI_VERSION;
+}
+
+FFAUDIO_API int ffaudio_ffmpeg_license(char *buffer, int32_t buffer_bytes)
+{
+    return copy_string(buffer, buffer_bytes, avutil_license());
+}
+
+FFAUDIO_API int ffaudio_ffmpeg_configuration(char *buffer, int32_t buffer_bytes)
+{
+    return copy_string(buffer, buffer_bytes, avutil_configuration());
+}
+
+// av_version_info is the git describe of the FFmpeg the binary was built from
+// - "7.1.1", or "n7.1-32-gabc1234" for a checkout between releases - which is
+// the version a relink has to start from. It is absent from some vendored
+// builds, in which case the numeric avutil version is all there is to say.
+FFAUDIO_API int ffaudio_ffmpeg_version(char *buffer, int32_t buffer_bytes)
+{
+    const char *info = av_version_info();
+    if (info && *info)
+        return copy_string(buffer, buffer_bytes, info);
+
+    char fallback[32];
+    unsigned version = avutil_version();
+    snprintf(fallback, sizeof(fallback), "libavutil %u.%u.%u",
+             version >> 16, (version >> 8) & 0xff, version & 0xff);
+    return copy_string(buffer, buffer_bytes, fallback);
 }

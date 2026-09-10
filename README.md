@@ -5,8 +5,9 @@ A narrow, audio-only façade over FFmpeg's decode libraries, for .NET.
 Open a file or a `Stream`, ask what PCM it holds, read interleaved samples,
 seek, close — plus the handful of questions every consumer asks about a file
 it has just opened: its tags, its cover art, its channel layout, what codec
-and container it is. That is the whole of it: thirteen C functions over ints
-and byte buffers, and a small managed binding on top. `native/ffaudio.h` is
+and container it is, and which FFmpeg is inside the binary. That is the whole
+of it: sixteen C functions over ints and byte buffers, and a small managed
+binding on top. `native/ffaudio.h` is
 the entire interface and is meant to be read in one sitting.
 
 ```csharp
@@ -302,6 +303,38 @@ corresponding source offer, and must keep the FFmpeg libraries replaceable —
 dynamically linked on desktop; on mobile, where they are linked in, an
 equivalent relink route has to be offered. See `NOTICE`.
 
+### Asking the binary rather than the build
+
+A configure line lives in a script, a variant lives in an environment variable,
+and neither travels with a `.dylib` that has been copied into a NuGet, embedded
+in an app bundle and shipped. avutil travels with it:
+
+```csharp
+FFmpegBuild.Version           // "7.1.1", or a git describe
+FFmpegBuild.License           // "LGPL version 2.1 or later" — or "GPL version 2 or later"
+FFmpegBuild.Configuration     // the configure line, verbatim
+FFmpegBuild.IsRedistributable // whether this particular binary may be shipped
+```
+
+`Configuration` is the half of the LGPL's relink route that the binary can
+state for itself: on a phone, where FFmpeg is linked in, it is the exact
+arguments needed to reproduce what is inside it.
+
+`IsRedistributable` is a question rather than an assertion, because the answer
+is allowed to be no — a developer's machine is expected to fail it. What must
+never happen is shipping one without noticing, so
+`FFmpegBuildTests.A_shipping_build_carries_an_lgpl_only_ffmpeg` asserts it
+whenever `FFAUDIO_REQUIRE_LGPL` is set, and skips otherwise. CI sets it on
+Windows only: that FFmpeg is a pinned LGPL build this repo chose, where
+Linux's and macOS's come from apt and brew. So the gate doubles as a check
+that the pinned Windows asset is still what its name says.
+
+The build asserts the same thing from the other side, where it can:
+`ffaudio_assert_lgpl` reads the generated `config.h` after configure and stops
+a mobile build whose `CONFIG_GPL` or `CONFIG_NONFREE` came back set. Two
+checks because they fail at different times — one when the FFmpeg is built,
+one when a binary that already exists is asked.
+
 **A MacPorts or Homebrew FFmpeg is not a shipping build.** Both enable GPL
 components by default. They are fine for development and for running the tests;
 they cannot be packaged. Point `PKG_CONFIG_LIBDIR` at an LGPL-only prefix for
@@ -506,6 +539,13 @@ test.
 | iOS | `ffaudio.framework` per slice | Built; decode checks pass on the simulator and on a physical device |
 | Android | `libffaudio.so` per ABI | Built for all three ABIs; decode checks pass on an emulator |
 
+`FFmpegBuild` is new and, like everything else here, additive: three
+functions, no struct moved, no signature changed, so `FFAUDIO_ABI_VERSION`
+stays 1. Unlike the metadata surface it is not called on any path a decode
+takes, so an older façade paired with this binding fails only if something
+asks — which is the difference between a library that will not open a file
+and one whose licence question throws.
+
 `full` has never been built for a phone: its configure line was verified by
 configuring FFmpeg 7.1.1 with it on macOS — 201 audio decoders, 350 demuxers,
 `CONFIG_GPL 0` — and no slice or ABI has been linked from it. The DSD
@@ -515,10 +555,9 @@ demuxed and then failed to find a decoder, and the fix is a configure line
 that no phone has yet run.
 
 The metadata surface — tags, cover art, channel layout, codec and container
-names — is built and tested on macOS only so far. It is plain `avformat`
-dictionary and stream reading with no platform-specific path in it, so there
-is no particular reason to expect it to differ elsewhere, but CI has not yet
-run it anywhere else.
+names — now runs green on all three desktops and on both phone simulators,
+which it had not when it was written: run 34436202607 is the first time it was
+built anywhere but macOS.
 
 Nothing is published to NuGet yet: the workflow and the versioning are in
 place, but no `v*` tag has been cut and no `NUGET_API_KEY` secret has been

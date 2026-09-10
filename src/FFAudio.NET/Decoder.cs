@@ -104,7 +104,7 @@ namespace FFAudio
 
             var codec = "";
             var container = "";
-            ReadPair(
+            NativeText.ReadPair(
                 (a, aBytes, b, bBytes) => Native.Names(handle, a, aBytes, b, bBytes),
                 out codec, out container);
 
@@ -116,7 +116,7 @@ namespace FFAudio
                 format.SourceSampleRate,
                 format.SourceChannels,
                 format.DurationMs < 0 ? null : TimeSpan.FromMilliseconds(format.DurationMs),
-                ReadString((buffer, bytes) => Native.ChannelLayout(handle, buffer, bytes)),
+                NativeText.ReadString((buffer, bytes) => Native.ChannelLayout(handle, buffer, bytes)),
                 codec,
                 container);
         }
@@ -331,7 +331,7 @@ namespace FFAudio
             for (var i = 0; i < count; i++)
             {
                 var index = i;
-                ReadPair((k, kBytes, v, vBytes) => Native.TagAt(handle, index, k, kBytes, v, vBytes),
+                NativeText.ReadPair((k, kBytes, v, vBytes) => Native.TagAt(handle, index, k, kBytes, v, vBytes),
                          out var key, out var value);
                 tags.Add(new KeyValuePair<string, string>(key, value));
             }
@@ -369,65 +369,7 @@ namespace FFAudio
             if (rc != Native.Ok)
                 throw new DecodeException("Could not read this file's cover art", rc);
 
-            return new CoverArt(bytes, Text(mime));
-        }
-
-        private delegate int FillOne(byte* buffer, int bufferBytes);
-
-        private delegate int FillTwo(byte* first, int firstBytes, byte* second, int secondBytes);
-
-        // The façade reports a buffer it could not fill but not the size it
-        // wanted, so the answer is to ask again with more room. Lyrics and
-        // comment tags are the reason this is not a fixed 256 bytes; the cap
-        // is there so a corrupt length cannot turn into an allocation loop.
-        private const int MaxTextBytes = 1 << 20;
-
-        private static string ReadString(FillOne fill)
-        {
-            for (var capacity = 256; ; capacity *= 4)
-            {
-                var buffer = new byte[capacity];
-                int rc;
-                fixed (byte* pointer = buffer)
-                    rc = fill(pointer, capacity);
-
-                if (rc == Native.Truncated && capacity < MaxTextBytes)
-                    continue;
-                if (rc != Native.Ok)
-                    throw new DecodeException("Could not read a text field", rc);
-
-                return Text(buffer);
-            }
-        }
-
-        private static void ReadPair(FillTwo fill, out string first, out string second)
-        {
-            for (var capacity = 256; ; capacity *= 4)
-            {
-                var a = new byte[capacity];
-                var b = new byte[capacity];
-                int rc;
-                fixed (byte* pa = a)
-                fixed (byte* pb = b)
-                    rc = fill(pa, capacity, pb, capacity);
-
-                if (rc == Native.Truncated && capacity < MaxTextBytes)
-                    continue;
-                if (rc != Native.Ok)
-                    throw new DecodeException("Could not read a text field", rc);
-
-                first = Text(a);
-                second = Text(b);
-                return;
-            }
-        }
-
-        // Every string the façade writes is NUL-terminated, so the terminator
-        // rather than the buffer length is what says where it ends.
-        private static string Text(byte[] buffer)
-        {
-            fixed (byte* pointer = buffer)
-                return Marshal.PtrToStringUTF8((IntPtr)pointer) ?? "";
+            return new CoverArt(bytes, NativeText.Text(mime));
         }
 
         public void Dispose()

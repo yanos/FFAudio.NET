@@ -28,9 +28,17 @@ The obligation differs by platform, and both halves are met here:
   a phone has no package manager to obtain one from. Replaceability is
   therefore met by relink route rather than by dynamic linking:
   native/ios/build-ffmpeg.sh and native/android/build-ffmpeg.sh contain the
-  exact FFmpeg version and the exact configure line used, and rebuilding the
-  binary from an FFmpeg of the user's own choosing is those two scripts plus
-  the corresponding build.sh.
+  exact FFmpeg version, and the exact component list they configure it with is
+  native/codec-set.sh, selected by FFAUDIO_VARIANT. Rebuilding the binary from
+  an FFmpeg of the user's own choosing is those scripts plus the corresponding
+  build.sh.
+
+  A binary can also be asked directly, which is what a person holding one
+  actually has: ffaudio_ffmpeg_configuration returns the configure line
+  FFmpeg itself recorded, and ffaudio_ffmpeg_license returns avutil's own
+  answer about the terms. FFmpegBuild exposes both to managed callers. That
+  is the authoritative statement about a given artifact; the scripts describe
+  how it was meant to be built.
 
 Anyone distributing a binary built from this repository is responsible for
 carrying that source offer onward.

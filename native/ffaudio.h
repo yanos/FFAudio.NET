@@ -202,6 +202,35 @@ FFAUDIO_API void ffaudio_error_string(int code, char *buffer, int32_t buffer_byt
 
 FFAUDIO_API int32_t ffaudio_abi_version(void);
 
+// ---------------------------------------------------------------------------
+// Which FFmpeg is in here
+//
+// Asked of the binary rather than of the build that produced it, which is the
+// whole point: a shipped artifact has been through a configure line, a
+// toolchain and possibly someone else's hands, and none of those travel with
+// it. avutil does travel with it.
+//
+// ffaudio_ffmpeg_license is avutil's own answer - "LGPL version 2.1 or later"
+// for a build this repo may ship, "GPL version 2 or later" or "nonfree and
+// unredistributable" for one it may not. FFmpeg's four libraries carry the
+// same define out of one configure run, so avutil's answer is the build's;
+// a binary linked from four separately-configured FFmpegs is not a case this
+// answers, and is not a case any of these scripts can produce.
+//
+// ffaudio_ffmpeg_configuration is the configure line FFmpeg was built with,
+// verbatim. On mobile, where FFmpeg is linked in and replaceability is met by
+// a relink route rather than by dynamic linking, this is the half of that
+// route the binary can state for itself: the exact arguments to reproduce
+// what is inside it. It is long - well over a kilobyte for a full build - so
+// expect FFAUDIO_ERR_TRUNCATED and ask again with more room.
+//
+// All three write into caller-owned storage, never allocate, and always
+// NUL-terminate.
+// ---------------------------------------------------------------------------
+FFAUDIO_API int ffaudio_ffmpeg_license(char *buffer, int32_t buffer_bytes);
+FFAUDIO_API int ffaudio_ffmpeg_configuration(char *buffer, int32_t buffer_bytes);
+FFAUDIO_API int ffaudio_ffmpeg_version(char *buffer, int32_t buffer_bytes);
+
 #ifdef __cplusplus
 }
 #endif

@@ -94,8 +94,17 @@ jobs:
       # out of native/artifacts/<platform>/ - the same path the step above
       # wrote it to, and the same one a developer's build-all.sh run uses.
       # Nothing is copied anywhere for CI's benefit.
+      # Windows alone is held to it, and that is not an oversight. Its FFmpeg
+      # is a pinned LGPL build this repo chose; Linux's and macOS's come from
+      # apt and brew, which ship GPL-enabled FFmpeg and are development
+      # dependencies rather than shipping ones. So this gate is a check that
+      # the pinned Windows asset is still what its name says - a swapped or
+      # renamed release would otherwise be discovered by a lawyer rather than
+      # by a build. See FFmpegBuildTests.
       - name: Run tests
         run: dotnet test FFAudio.NET.slnx --configuration Release
+        env:
+          FFAUDIO_REQUIRE_LGPL: ${{ runner.os == 'Windows' && '1' || '' }}
 
       # The façade this job just proved decodes, downloadable from the run.
       #
