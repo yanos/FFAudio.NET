@@ -100,8 +100,12 @@ build_abi() {
     # strip above takes the symtab with it and the dynamic table is what a
     # loader - and anyone linking against this - actually sees; without it the
     # check reads "no symbols" and passes whatever it was handed.
+    # Absolute symbols dropped for the reason the Linux script records: the
+    # version script's own FFAUDIO_1 node sits in the dynamic table as one, and
+    # a node is not an export. llvm-nm has not been printing it, but the check
+    # should not depend on that.
     "$toolchain/llvm-nm" --dynamic --defined-only --extern-only "$dest/$library" |
-        grep -v ' ffaudio_' && echo "!! unexpected exports above" >&2 || true
+        awk '$2 != "A"' | grep -v ' ffaudio_' && echo "!! unexpected exports above" >&2 || true
 }
 
 build_abi arm64-v8a   aarch64-linux-android

@@ -65,9 +65,15 @@ echo "built $out/libffaudio.so ($(du -h "$out/libffaudio.so" | cut -f1))"
 # are *in* this file, and what keeps them out of the dynamic table is the
 # version script CMakeLists.txt derives from the header. --dynamic for the same
 # reason android/build.sh gives: the dynamic table is what a loader sees.
+#
+# Absolute symbols are dropped before the leak check because the version script
+# puts its own node - FFAUDIO_1 - in the dynamic table as one, and a node is
+# not an export. Reading it as a leaked FFmpeg symbol is exactly what this did
+# on its first CI run, failing a build whose sixteen exports were correct.
 nm --dynamic --defined-only --extern-only "$out/libffaudio.so" | grep ffaudio_ || true
 if [ -n "${FFAUDIO_STATIC:-}" ]; then
-    leaked="$(nm --dynamic --defined-only --extern-only "$out/libffaudio.so" | grep -v ' ffaudio_' || true)"
+    leaked="$(nm --dynamic --defined-only --extern-only "$out/libffaudio.so" |
+        awk '$2 != "A"' | grep -v ' ffaudio_' || true)"
     if [ -n "$leaked" ]; then
         echo "!! FFmpeg's own ABI is exported from this build:" >&2
         echo "$leaked" | head -20 >&2
