@@ -1,0 +1,15 @@
+bin/
+obj/
+*.user
+.idea/
+.vs/
+.vscode/
+.DS_Store
+
+# Built rather than restored, and per-platform: see native/README or the
+# repo README's "Building the natives". A tree of cross-compiled FFmpeg is
+# gigabytes and reproducible from build-ffmpeg.sh.
+native/artifacts/
+native/*/build/
+native/ios/ffmpeg/
+native/android/ffmpeg/

@@ -1,0 +1,36 @@
+FFAudio.NET
+Copyright (c) the FFAudio.NET contributors
+
+The façade (native/ffaudio.c, native/ffaudio.h), the build scripts and the
+managed binding in src/ are licensed under the Apache License, Version 2.0
+(see the LICENSE file).
+
+--------------------------------------------------------------------------
+FFmpeg — LGPL-2.1-or-later
+--------------------------------------------------------------------------
+This software links against FFmpeg (avformat, avcodec, avutil, swresample)
+and is not itself a work of FFmpeg. FFmpeg is used under the LGPL only: no
+build produced by this repository may be configured with --enable-gpl or
+--enable-nonfree, and the generated config.h must report CONFIG_GPL 0.
+
+Full license text: https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html
+Source: https://ffmpeg.org/download.html
+
+The obligation differs by platform, and both halves are met here:
+
+  Desktop (macOS, Linux, Windows). FFmpeg remains a set of separate,
+  dynamically linked libraries that an end user can replace with their own
+  build. native/windows/build.ps1 downloads a pinned LGPL binary
+  distribution; native/macos/build.sh and native/linux/build.sh link against
+  whatever LGPL-only FFmpeg pkg-config is pointed at.
+
+  Mobile (iOS, Android). FFmpeg is linked statically into the façade, because
+  a phone has no package manager to obtain one from. Replaceability is
+  therefore met by relink route rather than by dynamic linking:
+  native/ios/build-ffmpeg.sh and native/android/build-ffmpeg.sh contain the
+  exact FFmpeg version and the exact configure line used, and rebuilding the
+  binary from an FFmpeg of the user's own choosing is those two scripts plus
+  the corresponding build.sh.
+
+Anyone distributing a binary built from this repository is responsible for
+carrying that source offer onward.

@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <!-- The Stream overload hands FFmpeg two function pointers and reads into
+         a byte*, which is the whole point: no marshalling layer between the
+         decoder and the caller's buffer. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <RootNamespace>FFAudio</RootNamespace>
+    <AssemblyName>FFAudio.NET</AssemblyName>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <PackageId>FFAudio.NET</PackageId>
+    <Description>A narrow, audio-only façade over FFmpeg's decode libraries: open a file or a Stream, ask what PCM it holds, read interleaved samples, seek, close. Eight functions, four sample formats (S16, packed S24, S32, F32), and static natives for iOS and Android as well as the desktops.</Description>
+    <PackageTags>ffmpeg;audio;decode;pcm;decoder;flac;alac;mp3;aac;opus</PackageTags>
+    <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <!-- The managed assembly is the binding and nothing else. The decoder
+         itself arrives in a per-platform native package - see README.md's
+         "Packaging" - because a Windows FFmpeg is ~70MB and an iOS slice is
+         1.9MB, and nobody should pay for both. -->
+    <IncludeBuildOutput>true</IncludeBuildOutput>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="../../README.md" Pack="true" PackagePath="/" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Abstractions only: OpenStream logs one thing, when a caller-supplied
+         demuxer hint turns out to be wrong about the bytes, and that is the
+         only place anyone ever finds out. Taking the whole logging stack for
+         that would be a poor trade; taking nothing would silently swallow it. -->
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.0" />
+  </ItemGroup>
+</Project>

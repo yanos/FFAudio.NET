@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/FFAudio.NET/FFAudio.NET.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/FFAudio.Tests/FFAudio.Tests.csproj" />
+  </Folder>
+</Solution>

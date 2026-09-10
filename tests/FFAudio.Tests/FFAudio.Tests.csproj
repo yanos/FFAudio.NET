@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.8.1" />
+    <!-- xunit.v3.mtp-off, not plain xunit.v3: this runs through the classic
+         VSTest `dotnet test` flow, which the plain package's Microsoft Testing
+         Platform entry point does not serve. -->
+    <PackageReference Include="xunit.v3.mtp-off" Version="3.2.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.5" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/FFAudio.NET/FFAudio.NET.csproj" />
+  </ItemGroup>
+</Project>
