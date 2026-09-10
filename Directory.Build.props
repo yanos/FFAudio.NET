@@ -1,0 +1,29 @@
+<Project>
+  <!-- MinVer computes $(Version) from git tags on every build, a local one
+       included, and the SDK stamps it into each assembly as it is compiled
+       and into the nuspec `dotnet pack` generates.
+
+       That is the whole versioning story here: there is no version literal in
+       any file to forget to bump, and no second place for one to disagree
+       with. Tagging a commit v1.2.3 and pushing the tag is the release, and
+       the workflow that publishes the package computes its version the same
+       way the build does, by asking MinVer, so the two cannot part company.
+
+       Untagged, a build is 0.1.0-alpha.0.<height> - a pre-release, which is
+       the honest description of a commit nobody has decided to release. -->
+  <PropertyGroup>
+    <MinVerTagPrefix>v</MinVerTagPrefix>
+    <!-- A floor, used only until the first v* tag exists. Without it an
+         untagged repo versions everything 0.0.0-alpha.0.<height>, which reads
+         as "unversioned" rather than "heading for 0.1.0". Any tag at or above
+         this wins outright, so it stops mattering the moment one is cut. -->
+    <MinVerMinimumMajorMinor>0.1</MinVerMinimumMajorMinor>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="MinVer" Version="7.*">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers</IncludeAssets>
+    </PackageReference>
+  </ItemGroup>
+</Project>

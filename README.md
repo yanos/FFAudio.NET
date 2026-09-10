@@ -231,6 +231,107 @@ dotnet test --filter "Category!=RequiresNative"      # without one
 They decode real files through real FFmpeg. There are no mocks in here worth
 having: the claims are about bytes.
 
+## Versioning and releasing
+
+There is no version number written down anywhere. MinVer derives it from git
+tags on every build — local, CI and release alike — and the SDK stamps it into
+the assembly and into the nuspec `dotnet pack` generates.
+
+| Where you are | What you get |
+|---|---|
+| An untagged commit | `0.1.0-alpha.0.<height>` — a pre-release, which is what an unreleased commit is |
+| `v1.2.3` | `1.2.3`, an official release |
+| `v1.2.3-rc.1` | `1.2.3-rc.1`, which NuGet shows as a pre-release |
+
+So cutting a release is two commands and no edit:
+
+```
+git tag v1.2.3
+git push origin v1.2.3
+```
+
+`.github/workflows/ci.yml` picks the tag up. It is one workflow rather than
+two because `needs:` and artifacts only reach across jobs of the same run: a
+separate publish workflow firing on the same tag could not depend on the tests
+or download what they built, only repeat the work and hope the second answer
+matched the first. So the chain is `test` on three desktops → `pack` →
+`publish`, and the last of those is gated on the tag with
+`if: startsWith(github.ref, 'refs/tags/v')`.
+
+The publish job has no checkout and no build step. It downloads the package
+`pack` produced and pushes those exact bytes to nuget.org with the
+`NUGET_API_KEY` repository secret — so what gets published is the artifact of
+a green run, not a second compilation of the same commit that nobody looked
+at.
+
+The version it checks comes from `pack`, which asks MinVer and hands the
+answer down as a job output; `publish` compares that against the tag before
+pushing. Asking MinVer is the computation the build already did, and a second
+way of working the version out is a second way to be wrong — a shallow
+checkout is enough to make one, which is why every checkout here is
+`fetch-depth: 0`.
+
+### Trying the package before publishing it
+
+A folder is a valid NuGet feed, so the package can be consumed for real
+without anything leaving the machine:
+
+```
+dotnet pack src/FFAudio.NET/FFAudio.NET.csproj -c Release -o /tmp/nupkg
+dotnet nuget push /tmp/nupkg/FFAudio.NET.*.nupkg --source /tmp/localfeed
+```
+
+Then, in a throwaway consumer project, a `nuget.config` that points at it:
+
+```xml
+<configuration>
+  <packageSources>
+    <clear />
+    <add key="local" value="/tmp/localfeed" />
+    <add key="nuget.org" value="https://api.nuget.org/v3/index.json" />
+  </packageSources>
+  <config>
+    <add key="globalPackagesFolder" value="packages" />
+  </config>
+</configuration>
+```
+
+Both halves of that matter. `<clear />` is what stops a typo in the version
+quietly restoring some other package from nuget.org and calling it a pass. The
+private `globalPackagesFolder` is the one that actually bites: a package is
+cached under its exact version, so re-packing `0.1.0-alpha.0` with different
+contents and restoring again gets you the *first* one back, out of
+`~/.nuget/packages`, forever. Giving the consumer its own cache means deleting
+a directory is enough to start over.
+
+What the consumer will not get from the package today is a decoder — that is
+the per-platform native package under **Packaging**, which does not exist yet.
+Until it does, point `FFAUDIO_LIBRARY` at a built artifact or drop it beside
+the consumer's own binary, which is the same place a `runtimes/<rid>/native/`
+payload would land:
+
+```
+FFAUDIO_LIBRARY=…/native/artifacts/macos/libffaudio.dylib dotnet run
+```
+
+Without one, `Decoder.OpenPath` throws `DllNotFoundException` out of
+`EnsureAbi` — the managed half of the package is fine, and there is nothing
+for it to call.
+
+`.github/workflows/ci.yml` builds the façade and runs the suite against it on
+all three desktops on every push, then packs once behind them — `needs: test`,
+so a commit that stopped compiling on Windows produces no package at all. That
+pre-release package is a downloadable artifact of the run, so a commit can be
+tried before anyone decides to tag it, and packaging never breaks for the
+first time during a release.
+
+Each test job also uploads the façade it just proved decodes, as
+`ffaudio-Linux`, `ffaudio-macOS` and `ffaudio-Windows`. Nothing downstream
+consumes them yet — the package still carries no decoder — but a built native
+from each platform, at one commit, in one run, is the half of a
+`runtimes/<rid>/native/` payload that has to exist before the other half is
+worth writing.
+
 ## Debugging
 
 `-DFFAUDIO_ASAN=ON` builds with AddressSanitizer, worth doing after any change
@@ -248,4 +349,8 @@ test.
 | iOS | `ffaudio.framework` per slice | Built; decode checks pass on the simulator and on a physical device |
 | Android | `libffaudio.so` per ABI | Built for all three ABIs; decode checks pass on an emulator |
 
-Nothing is published to NuGet yet.
+Nothing is published to NuGet yet: the workflow and the versioning are in
+place, but no `v*` tag has been cut and no `NUGET_API_KEY` secret has been
+set. The per-platform native packages described under **Packaging** are not
+built by CI either — the mobile ones need a cross-compiled FFmpeg that takes
+tens of minutes, and the decision about where that runs has not been made.

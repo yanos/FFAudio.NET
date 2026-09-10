@@ -1,0 +1,242 @@
+name: CI
+
+# One workflow rather than two, because `needs:` and artifacts only reach
+# across jobs of the same run. A separate Publish workflow firing on the same
+# tag push cannot depend on this one's tests or download what it built - it can
+# only repeat them and hope the second answer matches the first. Chained here,
+# the package that reaches nuget.org is the exact file a green run produced.
+#
+#     push / PR       test on three desktops, then pack
+#     push of v*      the same, and then publish what was packed
+#
+# A version is a decision, and `git tag v1.2.3` followed by pushing the tag is
+# where it gets made. MinVer turns the tag into the package version, so there
+# is no file to edit and nothing that can disagree with the tag:
+#
+#     v1.2.3          an official release
+#     v1.2.3-rc.1     a pre-release, and NuGet shows it as one
+#
+# Neither form is special-cased below. The difference is entirely MinVer's,
+# read out of the tag, and NuGet's own definition of a pre-release is the
+# hyphen in the version string.
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  # Build the façade and run the suite against it, once per desktop platform.
+  #
+  # There is no "fast suite" to run without a native here, and that is on
+  # purpose: every test in DecoderTests is tagged RequiresNative, because a
+  # decode library whose tests do not decode anything is testing its own
+  # opinions. So the native build is not an optional step that a filter can
+  # route around - if it fails, the job fails, which is the point.
+  #
+  # Three platforms rather than one because the native is a different artifact
+  # on each: pkg-config against a distro FFmpeg on Linux, against Homebrew's
+  # on macOS, and a pinned LGPL download linked with MSVC on Windows. Those
+  # are three ways for the same C to stop compiling.
+  test:
+    name: Test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      # Full history, so MinVer sees the tags and commit height it versions
+      # these binaries from. actions/checkout defaults to depth 1, which
+      # silently yields MinVer's 0.0.0-alpha.0 fallback instead.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+          cache: true
+          cache-dependency-path: |
+            src/FFAudio.NET/FFAudio.NET.csproj
+            tests/FFAudio.Tests/FFAudio.Tests.csproj
+
+      # A distro FFmpeg is GPL-enabled, which makes it a development build
+      # only - fine for deciding whether the façade decodes, not for anything
+      # shipped. See NOTICE.
+      - name: Build ffaudio (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libavformat-dev libavcodec-dev libavutil-dev libswresample-dev
+          native/linux/build.sh
+
+      - name: Build ffaudio (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install ffmpeg
+          native/macos/build.sh
+
+      # No cross-compile and nothing to install: the script downloads a pinned
+      # LGPL Windows build of FFmpeg and links against its import libraries,
+      # which is why this is seconds where the mobile equivalents are tens of
+      # minutes.
+      - name: Build ffaudio (Windows)
+        if: runner.os == 'Windows'
+        run: ./native/windows/build.ps1
+        shell: pwsh
+
+      # The tests find the artifact through Native.Resolve's development walk,
+      # out of native/artifacts/<platform>/ - the same path the step above
+      # wrote it to, and the same one a developer's build-all.sh run uses.
+      # Nothing is copied anywhere for CI's benefit.
+      - name: Run tests
+        run: dotnet test FFAudio.NET.slnx --configuration Release
+
+      # The façade this job just proved decodes, downloadable from the run.
+      #
+      # Nothing downstream consumes these yet: the package carries the
+      # binding and no decoder, so a consumer still supplies their own
+      # libffaudio (FFAUDIO_LIBRARY, or beside their binary - see the README).
+      # Wiring them into a runtimes/<rid>/native/ payload is Phase 6, and this
+      # is the half of it that has to exist first - a built native from each
+      # platform, in one place, at one commit.
+      #
+      # Names must differ per job: upload-artifact v4 refuses a second upload
+      # under a name that already exists in the run, where v3 merged them.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ffaudio-${{ runner.os }}
+          path: native/artifacts/
+          if-no-files-found: error
+
+  # Packing on every push, not only on a tag. A release that discovers its own
+  # packaging is broken is a release that has to be re-cut, and the version
+  # this produces - MinVer's 0.1.0-alpha.0.<height> for an untagged commit - is
+  # a real pre-release, not a placeholder. The artifact is downloadable from
+  # the run, so a consumer can try a commit before it is tagged.
+  #
+  # `needs: test` gates it on all three platforms, so a commit that stopped
+  # compiling on Windows never produces a package at all.
+  pack:
+    name: Pack
+    needs: test
+    runs-on: ubuntu-latest
+
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      # Ask MinVer for the version rather than working it out a second way.
+      # This is the same target the pack below runs, so the two cannot
+      # disagree, and publishing it as a job output means the tag check
+      # downstream compares against what was actually packed rather than
+      # against a fresh guess.
+      #
+      # Two separate single-property calls on purpose: -getProperty returns a
+      # bare string for one property and a JSON object for two. The restore is
+      # not optional - MinVer's targets arrive with the package, so without it
+      # this fails with MSB4057, "the target MinVer does not exist".
+      - name: Resolve the version
+        id: version
+        run: |
+          dotnet restore src/FFAudio.NET/FFAudio.NET.csproj
+          version=$(dotnet msbuild src/FFAudio.NET/FFAudio.NET.csproj -target:MinVer -getProperty:Version)
+          prerelease=$(dotnet msbuild src/FFAudio.NET/FFAudio.NET.csproj -target:MinVer -getProperty:MinVerPreRelease)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
+          if [ -z "$prerelease" ]; then
+            echo "$version is an official release" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "$version is a pre-release ($prerelease)" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Pack
+        run: dotnet pack src/FFAudio.NET/FFAudio.NET.csproj --configuration Release -p:ContinuousIntegrationBuild=true --output artifacts/nupkg
+
+      # What went into the package, in the log, so a build's version and
+      # dependencies are readable without downloading anything.
+      - name: Show the generated nuspec
+        run: unzip -p artifacts/nupkg/*.nupkg '*.nuspec'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nupkg
+          path: artifacts/nupkg/*
+          if-no-files-found: error
+
+  # Tags only, and only after every test job and the pack above have gone
+  # green - `needs` is what makes that a dependency rather than a coincidence
+  # of timing. A push to nuget.org cannot be taken back, only unlisted, so the
+  # one irreversible step in this repo does not race anything.
+  #
+  # There is no checkout and no build here, deliberately. This job downloads
+  # the package `pack` produced and pushes those exact bytes; the thing that
+  # gets published is therefore the thing the run tested, not a second
+  # compilation of the same commit that nobody looked at.
+  publish:
+    name: Publish to NuGet
+    needs: pack
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: nupkg
+          path: artifacts/nupkg
+
+      # The tag says what version this is meant to be; MinVer, back in `pack`,
+      # said what version was actually built. They agree unless something went
+      # wrong upstream - a checkout that lost its history yields 0.0.0-alpha.0
+      # and would otherwise be published under a v1.2.3 tag without complaint.
+      # Cheaper to find out here than to unlist it afterwards.
+      - name: Check the version against the tag
+        env:
+          VERSION: ${{ needs.pack.outputs.version }}
+          PRERELEASE: ${{ needs.pack.outputs.prerelease }}
+        run: |
+          expected="${GITHUB_REF_NAME#v}"
+          if [ "$VERSION" != "$expected" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME wants $expected, MinVer computed $VERSION - refusing to publish"
+            exit 1
+          fi
+          ls -l artifacts/nupkg
+          if [ -z "$PRERELEASE" ]; then
+            echo "Publishing $VERSION as an official release" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Publishing $VERSION as a pre-release ($PRERELEASE)" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      # --skip-duplicate so re-running a failed job after a partial push is
+      # harmless rather than a hard error on a version that is already up.
+      # The .snupkg beside each package goes with it; `dotnet nuget push`
+      # sends symbol packages alongside the ones they belong to.
+      - name: Push to NuGet
+        env:
+          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+        run: |
+          if [ -z "$NUGET_API_KEY" ]; then
+            echo "::error::NUGET_API_KEY is not set - add it as a repository secret"
+            exit 1
+          fi
+          dotnet nuget push 'artifacts/nupkg/*.nupkg' \
+            --source https://api.nuget.org/v3/index.json \
+            --api-key "$NUGET_API_KEY" \
+            --skip-duplicate

@@ -1,5 +1,8 @@
 bin/
 obj/
+
+# `dotnet pack` output, and what the workflows upload from.
+artifacts/
 *.user
 .idea/
 .vs/
