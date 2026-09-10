@@ -12,6 +12,12 @@
        fails at runtime. RuntimeIdentifier is what tells them apart, and it is
        always set on an iOS build.
 
+       The platform guard is not belt and braces. buildTransitive exists so
+       this reaches an app through a shared library, and that library is built
+       once per head - so a RuntimeIdentifier test alone is true for osx-arm64
+       and android-arm64 as well, and would hand a macOS build an iOS
+       framework. TargetPlatformIdentifier is what says which head this is.
+
        $(MSBuildThisFileDirectory) is buildTransitive/<tfm>/ inside the
        extracted package, so the frameworks sit two levels up under
        native/ - see the .csproj that packs them. -->
@@ -20,13 +26,13 @@
     <FFAudioFrameworks>$(MSBuildThisFileDirectory)../../native/ios</FFAudioFrameworks>
   </PropertyGroup>
 
-  <ItemGroup Condition="$(RuntimeIdentifier.StartsWith('iossimulator'))">
+  <ItemGroup Condition="'$(TargetPlatformIdentifier)' == 'ios' And $(RuntimeIdentifier.StartsWith('iossimulator'))">
     <NativeReference Include="$(FFAudioFrameworks)/ios-simulator/ffaudio.framework">
       <Kind>Framework</Kind>
     </NativeReference>
   </ItemGroup>
 
-  <ItemGroup Condition="'$(RuntimeIdentifier)' != '' And !$(RuntimeIdentifier.StartsWith('iossimulator'))">
+  <ItemGroup Condition="'$(TargetPlatformIdentifier)' == 'ios' And '$(RuntimeIdentifier)' != '' And !$(RuntimeIdentifier.StartsWith('iossimulator'))">
     <NativeReference Include="$(FFAudioFrameworks)/ios-device/ffaudio.framework">
       <Kind>Framework</Kind>
     </NativeReference>

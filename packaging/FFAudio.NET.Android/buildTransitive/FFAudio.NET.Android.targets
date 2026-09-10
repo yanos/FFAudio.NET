@@ -8,13 +8,20 @@
 
        Which ABI actually runs is a property of the hardware - arm64-v8a on a
        phone, x86_64 on most emulators, armeabi-v7a on something older - which
-       is why shipping one is not an option. -->
+       is why shipping one is not an option.
+
+       Guarded on the platform for the same reason the iOS package is:
+       buildTransitive reaches an app through a shared library, and that
+       library is built once per head. AndroidNativeLibrary is an item type
+       only the Android SDK knows, so an unguarded declaration is inert off
+       Android rather than harmful - but inert-by-accident is not a rule, and
+       the two packages should read the same way. -->
 
   <PropertyGroup>
     <FFAudioAndroidLibs>$(MSBuildThisFileDirectory)../../native/android</FFAudioAndroidLibs>
   </PropertyGroup>
 
-  <ItemGroup>
+  <ItemGroup Condition="'$(TargetPlatformIdentifier)' == 'android'">
     <AndroidNativeLibrary Include="$(FFAudioAndroidLibs)/arm64-v8a/libffaudio.so">
       <Abi>arm64-v8a</Abi>
     </AndroidNativeLibrary>

@@ -19,8 +19,22 @@
     <IsPackable>false</IsPackable>
   </PropertyGroup>
 
-  <ItemGroup>
+  <!-- The binding, from the tree or from a package. $(FFAudioPackageVersion)
+       is what a consumer's build actually looks like, and the whole point of
+       running the checks that way is that a package is not a project: restore
+       resolves it, a .targets file inside it gets a say in the build, and the
+       native arrives by whatever route that package chose. None of that is
+       exercised by a ProjectReference, and all of it is what a consumer hits
+       first.
+
+       This project is the shared library in that arrangement rather than the
+       app - the heads beside it reference this - which is the shape
+       buildTransitive exists for. -->
+  <ItemGroup Condition="'$(FFAudioPackageVersion)' == ''">
     <ProjectReference Include="../../src/FFAudio.NET/FFAudio.NET.csproj" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(FFAudioPackageVersion)' != ''">
+    <PackageReference Include="FFAudio.NET" Version="$(FFAudioPackageVersion)" />
   </ItemGroup>
 
 </Project>

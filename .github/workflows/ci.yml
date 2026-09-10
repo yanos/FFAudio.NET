@@ -363,9 +363,67 @@ jobs:
           path: artifacts/nupkg/*
           if-no-files-found: error
 
-  # Tags only, and only after every test job and the pack above have gone
-  # green - `needs` is what makes that a dependency rather than a coincidence
-  # of timing. A push to nuget.org cannot be taken back, only unlisted, so the
+  # The package, used the way a consumer uses it, on an iOS Simulator.
+  #
+  # Everything above this proves the source works. Nothing above it proves the
+  # package does, and on iOS those are further apart than anywhere else: the
+  # framework does not arrive by RID, it arrives because FFAudio.NET.iOS ships
+  # a .targets file that declares a <NativeReference> in the consuming project,
+  # picking a slice off the RuntimeIdentifier. That file is not compiled, not
+  # tested and not run by anything in this repo - it runs for the first time
+  # inside somebody else's build, and if it is wrong the symptom there is a
+  # link error or an app that dies at launch.
+  #
+  # So this rebuilds the same runner the ios job built, with the tree's own
+  # framework and project reference switched off and the two packages switched
+  # on, and launches it. Same checks, same tally, same exit code - the only
+  # difference is where the binding and the native came from, which is the
+  # whole question.
+  #
+  # It needs `pack` rather than `ios`, and it downloads the nupkg artifact
+  # rather than building anything native: the bytes under test are the ones
+  # that would be pushed to nuget.org, not a second build of the same commit.
+  # Which also means this is the job that would notice a packaging change that
+  # packs an empty framework, or drops the .targets file, or names the wrong
+  # buildTransitive folder - none of which anything else here can see.
+  ios-package:
+    name: Checks (iOS, from the package)
+    needs: pack
+    runs-on: macos-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Install the iOS workload
+        run: dotnet workload install ios
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: nupkg
+          path: artifacts/nupkg
+
+      # A local folder feed, and nuget.org left in place because the binding
+      # package has real dependencies to restore. The source is added to a
+      # config in the repo root rather than the user profile so the whole
+      # thing is visible in the log if it goes wrong.
+      - name: Point NuGet at what was packed
+        run: |
+          dotnet new nugetconfig
+          dotnet nuget add source "$PWD/artifacts/nupkg" --name packed --configfile nuget.config
+          cat nuget.config
+
+      - name: Run the checks against the package
+        env:
+          FFAUDIO_PACKAGE_VERSION: ${{ needs.pack.outputs.version }}
+        run: scripts/ios-device-checks.sh
+
+  # Tags only, and only after every test job, the pack above, and the run that
+  # used what it packed have gone green - `needs` is what makes that a
+  # dependency rather than a coincidence of timing. A push to nuget.org cannot be taken back, only unlisted, so the
   # one irreversible step in this repo does not race anything.
   #
   # There is no checkout and no build here, deliberately. This job downloads
@@ -374,7 +432,7 @@ jobs:
   # compilation of the same commit that nobody looked at.
   publish:
     name: Publish to NuGet
-    needs: pack
+    needs: [pack, ios-package]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
 

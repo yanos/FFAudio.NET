@@ -399,6 +399,23 @@ follows the downmix, and the binary says which FFmpeg is inside it. That is
 the whole public surface — decode, metadata, identity — exercised end to end
 on every platform this library claims.
 
+The iOS run has a second mode, and it is the one that says whether the
+*package* works:
+
+```
+FFAUDIO_PACKAGE_VERSION=0.1.0-alpha.0.9 scripts/ios-device-checks.sh
+```
+
+Same thirteen checks, same runner, but the binding comes from `FFAudio.NET`
+and the framework from `FFAudio.NET.iOS` instead of from this tree. That
+matters more here than anywhere else: on iOS the native does not arrive by
+runtime identifier, it arrives because the package ships a `.targets` file
+that declares a `<NativeReference>` in whatever project consumes it. Nothing
+in this repo compiles that file or runs it — it runs for the first time inside
+somebody else's build, and when it is wrong the symptom there is a link error
+or an app that dies at launch. CI runs this mode against the packages a run
+actually produced, and a tag cannot publish without it going green.
+
 Three things this library depends on are green at link time and fatal at
 launch, and not one of them can fail on a desktop:
 

@@ -45,13 +45,24 @@
 
        Two slices because they are not interchangeable - a simulator binary
        will not load on a device and the reverse is worse, since it links.
-       Built by native/ios/build.sh into native/artifacts/ios/. -->
-  <ItemGroup Condition="$(RuntimeIdentifier.StartsWith('iossimulator'))">
+       Built by native/ios/build.sh into native/artifacts/ios/.
+
+       With $(FFAudioPackageVersion) set, none of this is declared and
+       FFAudio.NET.iOS brings the same two slices instead - its buildTransitive
+       .targets picks the slice off the RuntimeIdentifier exactly as the two
+       conditions below do. Declaring both would be two ffaudio.frameworks in
+       one app, which is either a duplicate-symbol failure or, worse, the wrong
+       one silently winning. -->
+  <ItemGroup Condition="'$(FFAudioPackageVersion)' != ''">
+    <PackageReference Include="FFAudio.NET.iOS" Version="$(FFAudioPackageVersion)" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(FFAudioPackageVersion)' == '' And $(RuntimeIdentifier.StartsWith('iossimulator'))">
     <NativeReference Include="..\..\native\artifacts\ios\ios-simulator\ffaudio.framework">
       <Kind>Framework</Kind>
     </NativeReference>
   </ItemGroup>
-  <ItemGroup Condition="!$(RuntimeIdentifier.StartsWith('iossimulator'))">
+  <ItemGroup Condition="'$(FFAudioPackageVersion)' == '' And !$(RuntimeIdentifier.StartsWith('iossimulator'))">
     <NativeReference Include="..\..\native\artifacts\ios\ios-device\ffaudio.framework">
       <Kind>Framework</Kind>
     </NativeReference>

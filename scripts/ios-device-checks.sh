@@ -20,6 +20,17 @@
 #   scripts/ios-device-checks.sh                 # first available simulator
 #   scripts/ios-device-checks.sh "iPhone 17 Pro" # by name
 #
+# FFAUDIO_PACKAGE_VERSION=0.1.0-alpha.0.9 scripts/ios-device-checks.sh
+#
+# runs the same checks against the packages instead of the tree: the binding
+# comes from FFAudio.NET and the framework from FFAudio.NET.iOS, injected by
+# that package's own buildTransitive .targets rather than declared by the
+# runner. That is the arrangement a consumer actually has, and it is the only
+# way to find out whether the package works - a green build of this repo says
+# nothing about it, because a ProjectReference resolves nothing and injects
+# nothing. Point NuGet at wherever the .nupkg files are first, with a
+# nuget.config or `dotnet nuget add source`.
+#
 # The app reports by writing a transcript into its own Documents directory,
 # which this reads out of the simulator's data container. Console.WriteLine
 # from a .NET iOS app does not reliably reach `simctl launch --console-pty`,
@@ -39,9 +50,18 @@ TRANSCRIPT="ffaudio-checks.log"
 TIMEOUT_SECONDS=180
 DEVICE="${1:-}"
 
+PACKAGE_VERSION="${FFAUDIO_PACKAGE_VERSION:-}"
+BUILD_ARGS=()
+
 # The framework has to exist before the build can embed it, and a missing one
-# is otherwise a link error several hundred lines into a build log.
-if [ ! -d "native/artifacts/ios/ios-simulator/ffaudio.framework" ]; then
+# is otherwise a link error several hundred lines into a build log. In package
+# mode there is nothing to look for here - the framework is inside a .nupkg
+# that restore has not unpacked yet, and its absence from the tree is the
+# normal state rather than a problem.
+if [ -n "$PACKAGE_VERSION" ]; then
+  echo "==> Packages: FFAudio.NET + FFAudio.NET.iOS $PACKAGE_VERSION"
+  BUILD_ARGS+=("-p:FFAudioPackageVersion=$PACKAGE_VERSION")
+elif [ ! -d "native/artifacts/ios/ios-simulator/ffaudio.framework" ]; then
   echo "No simulator framework at native/artifacts/ios/ios-simulator/ffaudio.framework." >&2
   echo "Run native/ios/build-ffmpeg.sh then native/ios/build.sh first." >&2
   exit 1
@@ -70,7 +90,7 @@ rm -rf checks/FFAudio.Checks.iOS/obj checks/FFAudio.Checks.iOS/bin \
 echo "==> Building"
 BUILD_LOG=$(mktemp)
 trap 'rm -f "$BUILD_LOG"' EXIT
-if ! dotnet build "$PROJECT" -c Debug -r iossimulator-arm64 >"$BUILD_LOG" 2>&1; then
+if ! dotnet build "$PROJECT" -c Debug -r iossimulator-arm64 "${BUILD_ARGS[@]+"${BUILD_ARGS[@]}"}" >"$BUILD_LOG" 2>&1; then
   cat "$BUILD_LOG"
   exit 1
 fi
