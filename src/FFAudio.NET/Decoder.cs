@@ -57,7 +57,12 @@ namespace FFAudio
     // The encoded image exactly as the container holds it - not decoded, not
     // rescaled. Bytes rather than a Stream because it is already in memory by
     // the time the container has been opened at all.
-    public sealed record CoverArt(byte[] Bytes, string MimeType);
+    //
+    // Width and Height come from the image's own header rather than from
+    // decoding it, so a picture in a format the façade cannot parse reports
+    // zero for both. Bytes without dimensions is an ordinary answer here, not
+    // a failure - callers that only want to show the image never need them.
+    public sealed record CoverArt(byte[] Bytes, string MimeType, int Width, int Height);
 
     public sealed class DecodeException(string message, int code)
         : IOException($"{message}: {Native.Describe(code)}")
@@ -350,8 +355,11 @@ namespace FFAudio
             var mime = new byte[256];
             int rc;
             int size;
+            int width;
+            int height;
             fixed (byte* mimeBuffer = mime)
-                rc = Native.CoverArt(_handle, null, 0, out size, mimeBuffer, mime.Length);
+                rc = Native.CoverArt(_handle, null, 0, out size, mimeBuffer, mime.Length,
+                                     out width, out height);
 
             if (rc == Native.NotPresent)
                 return null;
@@ -364,12 +372,13 @@ namespace FFAudio
             var bytes = new byte[size];
             fixed (byte* buffer = bytes)
             fixed (byte* mimeBuffer = mime)
-                rc = Native.CoverArt(_handle, buffer, bytes.Length, out _, mimeBuffer, mime.Length);
+                rc = Native.CoverArt(_handle, buffer, bytes.Length, out _, mimeBuffer, mime.Length,
+                                     out _, out _);
 
             if (rc != Native.Ok)
                 throw new DecodeException("Could not read this file's cover art", rc);
 
-            return new CoverArt(bytes, NativeText.Text(mime));
+            return new CoverArt(bytes, NativeText.Text(mime), width, height);
         }
 
         public void Dispose()

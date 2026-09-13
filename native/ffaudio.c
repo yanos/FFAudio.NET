@@ -263,6 +263,146 @@ static int stage_next(ffaudio_decoder *dec)
 
 // --------------------------------------------------------------------- open
 
+// Embedded cover art reaches FFmpeg as a video stream carrying a single
+// attached picture, and avformat_find_stream_info insists on knowing every
+// stream's parameters - for a video stream, its dimensions. This build has no
+// video decoder to learn them with (see native/codec-set.sh: the shipped
+// FFmpeg is --disable-everything plus an audio-only list), so the probe gives
+// up on every art-bearing file and says so on stderr:
+//
+//   Could not find codec parameters for stream 1 (Video: mjpeg, none):
+//   unspecified size
+//
+// which is how one ordinary album turns a console into pages of noise. It is
+// purely structural - the façade hands back PCM and never decodes a picture -
+// but it is emitted once per open, and a gapless player opens two at a time.
+//
+// Marking the stream AVDISCARD_ALL does not help: avformat_find_stream_info
+// never consults discard, and the loop that reports this walks every stream
+// unconditionally. Lowering the log level would, but av_log_set_level is
+// process-global, and a library that quiets FFmpeg behind its host's back -
+// racing the host's own threads to do it - is worse than the noise.
+//
+// So the parameters are supplied rather than suppressed. The demuxer has
+// already put the encoded image in AVStream.attached_pic by the time
+// avformat_open_input returns, and an image states its own dimensions in its
+// header, which is far less work than decoding it. has_codec_parameters wants
+// a non-zero width; with no decoder present it never asks about pixel format.
+// A picture that cannot be parsed is simply left alone, warning and all.
+static void size_attached_pictures(AVFormatContext *fmt);
+
+// The dimensions out of a JPEG's frame header. Walk the marker segments until
+// a start-of-frame is reached: SOF0/1/2/... all carry height then width as
+// big-endian 16-bit at the same offset. SOI/EOI and the RSTn markers are the
+// standalone ones, carrying no length word to skip by.
+static int jpeg_size(const uint8_t *d, int n, int *w, int *h)
+{
+    if (n < 4 || d[0] != 0xFF || d[1] != 0xD8)
+        return 0;
+
+    int i = 2;
+    while (i + 3 < n) {
+        if (d[i] != 0xFF) {
+            i++;
+            continue;
+        }
+        uint8_t marker = d[i + 1];
+        if (marker == 0xFF)
+            continue;
+        if (marker == 0xD8 || marker == 0x01 || (marker >= 0xD0 && marker <= 0xD7)) {
+            i += 2;
+            continue;
+        }
+
+        int len = (d[i + 2] << 8) | d[i + 3];
+        // A start-of-frame, excluding the four that are not frames at all:
+        // DHT (C4), JPG (C8) and DAC (CC) share the C0-CF range.
+        if (marker >= 0xC0 && marker <= 0xCF
+            && marker != 0xC4 && marker != 0xC8 && marker != 0xCC) {
+            if (i + 9 >= n)
+                return 0;
+            *h = (d[i + 5] << 8) | d[i + 6];
+            *w = (d[i + 7] << 8) | d[i + 8];
+            return *w > 0 && *h > 0;
+        }
+        if (len < 2)
+            return 0;
+        i += 2 + len;
+    }
+    return 0;
+}
+
+// PNG states its size in the IHDR chunk, which the spec requires to come
+// first: an 8-byte signature, the chunk's length and type, then width and
+// height as big-endian 32-bit.
+static int png_size(const uint8_t *d, int n, int *w, int *h)
+{
+    static const uint8_t sig[8] = { 0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A };
+    if (n < 24 || memcmp(d, sig, sizeof(sig)) != 0 || memcmp(d + 12, "IHDR", 4) != 0)
+        return 0;
+
+    *w = (d[16] << 24) | (d[17] << 16) | (d[18] << 8) | d[19];
+    *h = (d[20] << 24) | (d[21] << 16) | (d[22] << 8) | d[23];
+    return *w > 0 && *h > 0;
+}
+
+// GIF and BMP are both little-endian and both fixed-offset, which is the only
+// reason they are worth the handful of lines: some taggers still write them.
+static int gif_size(const uint8_t *d, int n, int *w, int *h)
+{
+    if (n < 10 || memcmp(d, "GIF8", 4) != 0)
+        return 0;
+
+    *w = d[6] | (d[7] << 8);
+    *h = d[8] | (d[9] << 8);
+    return *w > 0 && *h > 0;
+}
+
+static int bmp_size(const uint8_t *d, int n, int *w, int *h)
+{
+    if (n < 26 || d[0] != 'B' || d[1] != 'M')
+        return 0;
+
+    *w = (int)((uint32_t)d[18] | ((uint32_t)d[19] << 8) | ((uint32_t)d[20] << 16) | ((uint32_t)d[21] << 24));
+    int height = (int)((uint32_t)d[22] | ((uint32_t)d[23] << 8) | ((uint32_t)d[24] << 16) | ((uint32_t)d[25] << 24));
+    // A negative height is a top-down bitmap, not a smaller one.
+    *h = height < 0 ? -height : height;
+    return *w > 0 && *h > 0;
+}
+
+static void size_attached_pictures(AVFormatContext *fmt)
+{
+    for (unsigned i = 0; i < fmt->nb_streams; i++) {
+        AVStream *stream = fmt->streams[i];
+        AVCodecParameters *par = stream->codecpar;
+
+        if (!(stream->disposition & AV_DISPOSITION_ATTACHED_PIC))
+            continue;
+        if (par->width > 0 && par->height > 0)
+            continue;
+
+        const uint8_t *data = stream->attached_pic.data;
+        int size = stream->attached_pic.size;
+        if (!data || size <= 0)
+            continue;
+
+        int w = 0, h = 0;
+        int known = 0;
+        switch (par->codec_id) {
+            case AV_CODEC_ID_MJPEG: known = jpeg_size(data, size, &w, &h); break;
+            case AV_CODEC_ID_PNG:   known = png_size(data, size, &w, &h);  break;
+            case AV_CODEC_ID_GIF:   known = gif_size(data, size, &w, &h);  break;
+            case AV_CODEC_ID_BMP:   known = bmp_size(data, size, &w, &h);  break;
+            default: break;
+        }
+
+        if (known) {
+            par->width = w;
+            par->height = h;
+        }
+    }
+}
+
 static int finish_open(ffaudio_decoder *dec)
 {
     int stream = av_find_best_stream(dec->fmt, AVMEDIA_TYPE_AUDIO, -1, -1, NULL, 0);
@@ -381,6 +521,8 @@ FFAUDIO_API int ffaudio_decoder_open_path(const char *path,
     if (rc < 0)
         goto fail;
 
+    size_attached_pictures(dec->fmt);
+
     rc = avformat_find_stream_info(dec->fmt, NULL);
     if (rc < 0)
         goto fail;
@@ -455,6 +597,8 @@ FFAUDIO_API int ffaudio_decoder_open_io(void *opaque,
     rc = avformat_open_input(&dec->fmt, NULL, forced, NULL);
     if (rc < 0)
         goto fail;
+
+    size_attached_pictures(dec->fmt);
 
     rc = avformat_find_stream_info(dec->fmt, NULL);
     if (rc < 0)
@@ -730,7 +874,8 @@ static const char *picture_mime(const AVStream *stream)
 FFAUDIO_API int ffaudio_decoder_cover_art(ffaudio_decoder *decoder,
                                         uint8_t *buffer, int32_t buffer_bytes,
                                         int32_t *out_bytes,
-                                        char *mime, int32_t mime_bytes)
+                                        char *mime, int32_t mime_bytes,
+                                        int32_t *out_width, int32_t *out_height)
 {
     if (!decoder)
         return FFAUDIO_ERR_ARGUMENT;
@@ -738,6 +883,15 @@ FFAUDIO_API int ffaudio_decoder_cover_art(ffaudio_decoder *decoder,
     const AVStream *stream = attached_picture(decoder);
     if (!stream)
         return FFAUDIO_ERR_NOT_PRESENT;
+
+    // Whatever size_attached_pictures read out of the image header at open,
+    // or what a build that does have a video decoder worked out for itself -
+    // codecpar is the one place either answer lands. Zero means neither could
+    // tell, which the header documents as an ordinary answer.
+    if (out_width)
+        *out_width = stream->codecpar->width;
+    if (out_height)
+        *out_height = stream->codecpar->height;
 
     int size = stream->attached_pic.size;
     if (out_bytes)

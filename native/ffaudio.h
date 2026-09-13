@@ -175,10 +175,19 @@ FFAUDIO_API int ffaudio_decoder_tag_at(ffaudio_decoder *decoder,
 // façade neither decodes nor rescales it. A buffer that is too small is
 // FFAUDIO_ERR_TRUNCATED with the required size in out_bytes, and nothing is
 // written, because half a JPEG is not a smaller JPEG.
+//
+// out_width and out_height are the picture's own dimensions, which a caller
+// sizing a cache or choosing between two sources wants before committing to
+// decoding megabytes. They are read from the image's header rather than by
+// decoding it - the shipped FFmpeg is audio-only and has no decoder that
+// could - so a format this façade cannot parse reports 0 x 0 rather than
+// guessing. Present bytes with absent dimensions is therefore an ordinary
+// answer, not an error. Either pointer may be NULL.
 FFAUDIO_API int ffaudio_decoder_cover_art(ffaudio_decoder *decoder,
                                         uint8_t *buffer, int32_t buffer_bytes,
                                         int32_t *out_bytes,
-                                        char *mime, int32_t mime_bytes);
+                                        char *mime, int32_t mime_bytes,
+                                        int32_t *out_width, int32_t *out_height);
 
 // The delivered PCM's channel layout in FFmpeg's canonical text form -
 // "stereo", "5.1(side)", "mono". The struct stays on this side of the header,

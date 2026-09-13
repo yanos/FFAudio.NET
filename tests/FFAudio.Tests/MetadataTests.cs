@@ -64,6 +64,29 @@ public class MetadataTests : IDisposable
         Assert.Equal(SyntheticTaggedAiff.CoverPng(), art.Bytes);
     }
 
+    // Read out of the PNG's own header rather than by decoding it, which is
+    // the only route available: the shipped FFmpeg is audio-only and has no
+    // decoder that could size a picture. That parse is also what keeps
+    // avformat_find_stream_info from giving up on the art stream and warning
+    // "Could not find codec parameters ... unspecified size" on every
+    // art-bearing file opened - so a zero here is the noise coming back.
+    //
+    // Worth knowing about this assertion: a development build linked against
+    // a full FFmpeg gets these dimensions from find_stream_info regardless, so
+    // it is the slim builds - the phones, and CI's static desktop ones - where
+    // this genuinely guards the parser.
+    [Fact]
+    public void Cover_art_reports_the_dimensions_in_the_image_header()
+    {
+        using var decoder = Decoder.OpenPath(TaggedFixture(), SampleFormat.S16);
+
+        var art = decoder.TryReadCoverArt();
+
+        Assert.NotNull(art);
+        Assert.Equal(1, art.Width);
+        Assert.Equal(1, art.Height);
+    }
+
     // Null rather than an exception: most music files have no embedded art,
     // and a caller asking is not making a mistake.
     [Fact]

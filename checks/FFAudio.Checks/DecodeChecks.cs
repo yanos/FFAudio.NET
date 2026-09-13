@@ -490,7 +490,17 @@ public static class DecodeChecks
             Expect(art.Bytes[i] == expected[i], $"art byte {i} differs: {art.Bytes[i]} vs {expected[i]}");
         }
 
-        return $"{art.Bytes.Length} bytes of {art.MimeType}";
+        // The dimensions matter most on exactly the builds this check runs on.
+        // A phone links an audio-only FFmpeg, which has no decoder that could
+        // work out a picture's size, so these come from the façade reading the
+        // PNG header itself - and a zero here means that parse silently
+        // stopped happening, which is also what would bring back the
+        // "Could not find codec parameters ... unspecified size" noise on
+        // every art-bearing file the app opens.
+        Expect(art.Width == 1 && art.Height == 1,
+            $"art is {art.Width}x{art.Height}, wanted 1x1");
+
+        return $"{art.Bytes.Length} bytes of {art.MimeType}, {art.Width}x{art.Height}";
     }
 
     private static string NoTagsAreReported(string path)

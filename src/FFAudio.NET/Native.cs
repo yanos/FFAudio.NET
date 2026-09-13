@@ -170,7 +170,8 @@ namespace FFAudio
         internal static extern unsafe int CoverArt(IntPtr decoder,
                                                    byte* buffer, int bufferBytes,
                                                    out int outBytes,
-                                                   byte* mime, int mimeBytes);
+                                                   byte* mime, int mimeBytes,
+                                                   out int outWidth, out int outHeight);
 
         [DllImport(Library, EntryPoint = "ffaudio_decoder_channel_layout", CallingConvention = CallingConvention.Cdecl)]
         internal static extern unsafe int ChannelLayout(IntPtr decoder, byte* buffer, int bufferBytes);
