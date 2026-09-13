@@ -427,8 +427,19 @@ public static class DecodeChecks
         }
         catch (DecodeException exception)
         {
-            var expectedMessage = OperatingSystem.IsWindows() ? "I/O error" : "Input/output error";
-            Expect(exception.Message.Contains(expectedMessage, StringComparison.OrdinalIgnoreCase),
+            // Both spellings of the same errno. The text is libc's rather than
+            // FFmpeg's - av_strerror hands EIO straight to strerror - so it is
+            // the platform's C library that decides the wording, not the
+            // platform's family: glibc says "Input/output error", while
+            // Bionic and the Windows CRT both say "I/O error". Keying this on
+            // IsWindows was a guess that held until the first Android run.
+            //
+            // Still asserted rather than dropped: the claim worth keeping is
+            // that a mid-stream failure arrives as a DecodeException a person
+            // can read, and an empty or generic message would fail that. What
+            // is not worth asserting is which libc the phone shipped.
+            Expect(exception.Message.Contains("I/O error", StringComparison.OrdinalIgnoreCase)
+                    || exception.Message.Contains("Input/output error", StringComparison.OrdinalIgnoreCase),
                 $"stream failure was {Quote(exception.Message)}");
             Expect(produced > 0 && produced < Frames * 6, $"{produced} bytes before failure");
             Expect(source.Reads is >= 1 and <= 200, $"{source.Reads} reads before failure");
