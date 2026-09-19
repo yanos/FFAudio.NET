@@ -42,6 +42,7 @@ struct ffaudio_decoder {
 
     int      packet_drained;   // no more packets to send
     int      finished;         // the codec has been fully flushed
+    int      deferred_error;   // held back while decoded bytes were returned
 
     void           *io_opaque;
     ffaudio_read_fn  io_read;
@@ -49,6 +50,9 @@ struct ffaudio_decoder {
     int             seekable;
 
     int64_t last_frame_ms;
+
+    // Where the last packet of the audio stream ended, or -1 if unknown.
+    int64_t last_packet_end;
 
     int32_t requested_format;
     int32_t requested_rate;
@@ -189,6 +193,73 @@ static int stage_swr_tail(ffaudio_decoder *dec)
     return FFAUDIO_OK;
 }
 
+#define FFAUDIO_APE_FOOTER_BYTES 32
+#define FFAUDIO_ID3V1_BYTES      128
+#define FFAUDIO_TAG_DRAIN_LIMIT  (64 << 20)
+
+static uint32_t read_le32(const uint8_t *p)
+{
+    return (uint32_t)p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24;
+}
+
+// Whether a failed read is a WavPack stream reaching its trailing APE tag.
+// On seekable input FFmpeg's wv demuxer finds the tag at open and stops
+// there. Without seeking it reads the tag as a block header and fails with
+// AVERROR_INVALIDDATA after the last audio. This drains the rest of the
+// stream and accepts it only if it is exactly one APE tag, optionally followed
+// by ID3v1, starting where the last audio packet ended. Other damage still
+// fails.
+static int is_trailing_ape_tag(ffaudio_decoder *dec)
+{
+    if (dec->seekable || dec->last_packet_end < 0 || strcmp(dec->fmt->iformat->name, "wv") != 0)
+        return 0;
+
+    AVIOContext *pb = dec->fmt->pb;
+    uint8_t tail[FFAUDIO_APE_FOOTER_BYTES + FFAUDIO_ID3V1_BYTES];
+    uint8_t chunk[4096];
+    int tail_bytes = 0;
+    int64_t drained = 0;
+
+    for (;;) {
+        int read = avio_read(pb, chunk, sizeof(chunk));
+        if (read <= 0)
+            break;
+        drained += read;
+        if (drained > FFAUDIO_TAG_DRAIN_LIMIT)
+            return 0;
+
+        // Keep the last sizeof(tail) bytes.
+        if (read >= (int)sizeof(tail)) {
+            memcpy(tail, chunk + read - sizeof(tail), sizeof(tail));
+            tail_bytes = sizeof(tail);
+        } else {
+            int keep = tail_bytes + read > (int)sizeof(tail) ? (int)sizeof(tail) - read : tail_bytes;
+            memmove(tail, tail + tail_bytes - keep, keep);
+            memcpy(tail + keep, chunk, read);
+            tail_bytes = keep + read;
+        }
+    }
+
+    int64_t end = avio_tell(pb);
+    int id3v1 = tail_bytes >= FFAUDIO_APE_FOOTER_BYTES + FFAUDIO_ID3V1_BYTES
+        && memcmp(tail + tail_bytes - FFAUDIO_ID3V1_BYTES, "TAG", 3) == 0;
+    int footer_end = tail_bytes - (id3v1 ? FFAUDIO_ID3V1_BYTES : 0);
+    if (footer_end < FFAUDIO_APE_FOOTER_BYTES)
+        return 0;
+
+    const uint8_t *footer = tail + footer_end - FFAUDIO_APE_FOOTER_BYTES;
+    if (memcmp(footer, "APETAGEX", 8) != 0)
+        return 0;
+
+    // The size counts items and footer. Bit 31 of the flags marks a header.
+    int64_t tag_bytes = read_le32(footer + 12);
+    if (read_le32(footer + 20) & 0x80000000u)
+        tag_bytes += FFAUDIO_APE_FOOTER_BYTES;
+
+    int64_t tag_start = end - tag_bytes - (id3v1 ? FFAUDIO_ID3V1_BYTES : 0);
+    return tag_start == dec->last_packet_end;
+}
+
 // Feed packets until one decoded frame is staged.
 static int stage_next(ffaudio_decoder *dec)
 {
@@ -215,7 +286,7 @@ static int stage_next(ffaudio_decoder *dec)
         }
 
         rc = av_read_frame(dec->fmt, dec->packet);
-        if (rc == AVERROR_EOF) {
+        if (rc == AVERROR_EOF || (rc == AVERROR_INVALIDDATA && is_trailing_ape_tag(dec))) {
             dec->packet_drained = 1;
             continue;
         }
@@ -226,6 +297,7 @@ static int stage_next(ffaudio_decoder *dec)
             av_packet_unref(dec->packet);
             continue;
         }
+        dec->last_packet_end = dec->packet->pos >= 0 ? dec->packet->pos + dec->packet->size : -1;
 
         rc = avcodec_send_packet(dec->codec, dec->packet);
         av_packet_unref(dec->packet);
@@ -432,6 +504,7 @@ static int alloc_decoder(int32_t requested_format,
 
     dec->stream_index = -1;
     dec->last_frame_ms = 0;
+    dec->last_packet_end = -1;
     dec->swr_format = swr_format;
     dec->requested_format = requested_format;
     dec->requested_rate = requested_rate;
@@ -575,6 +648,12 @@ FFAUDIO_API int ffaudio_decoder_read(ffaudio_decoder *decoder,
     *out_bytes = 0;
     int written = 0;
 
+    if (decoder->deferred_error) {
+        int deferred = decoder->deferred_error;
+        decoder->deferred_error = 0;
+        return deferred;
+    }
+
     while (written < buffer_bytes) {
         int available = decoder->pending_bytes - decoder->pending_offset;
         if (available > 0) {
@@ -593,8 +672,10 @@ FFAUDIO_API int ffaudio_decoder_read(ffaudio_decoder *decoder,
             return written > 0 ? FFAUDIO_OK : FFAUDIO_EOF;
         }
         if (rc != FFAUDIO_OK) {
-            // Return valid decoded bytes before surfacing the error next time.
+            // Return valid decoded bytes now and the error on the next read,
+            // which cannot rely on the source failing a second time.
             if (written > 0) {
+                decoder->deferred_error = rc;
                 *out_bytes = written;
                 return FFAUDIO_OK;
             }
@@ -625,6 +706,7 @@ FFAUDIO_API int ffaudio_decoder_seek(ffaudio_decoder *decoder, int64_t position_
     decoder->pending_offset = 0;
     decoder->packet_drained = 0;
     decoder->finished = 0;
+    decoder->deferred_error = 0;
     decoder->last_frame_ms = position_ms;
 
     // Rebuild swresample to discard delayed samples from before the seek.

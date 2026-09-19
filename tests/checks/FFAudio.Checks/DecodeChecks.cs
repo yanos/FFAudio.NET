@@ -82,6 +82,14 @@ public static class DecodeChecks
                     () => HighFidelityAudioIsPreserved(fixture)));
             }
 
+            foreach (var fixture in BundledFormatFixtures.All.Concat(BundledFormatFixtures.HighFidelity))
+            {
+                results.Add(Run($"{fixture.FileName} decodes the same from an unseekable stream",
+                    () => UnseekableFixtureMatchesSeekable(fixture)));
+            }
+
+            results.Add(Run("junk before a WavPack tag still faults on an unseekable stream", JunkBeforeWavPackTagFaults));
+
             foreach (var fixture in BundledFormatFixtures.All.Where(fixture => fixture.SampleRate != 48000))
             {
                 results.Add(Run($"{fixture.Codec} resampled to 48kHz keeps its pitch and length",
@@ -709,6 +717,59 @@ public static class DecodeChecks
             $"decoded 24-bit PCM differs from the {expected.Length / 6}-frame reference");
 
         return $"{actual.Length / 6} stereo frames, bit exact";
+    }
+
+    // Forward-only input is what a server that refuses ranges hands over.
+    // Every format must end where it ends from a seekable stream, including
+    // a WavPack file with a trailing APE tag.
+    private static string UnseekableFixtureMatchesSeekable(BundledFormatFixture fixture)
+    {
+        byte[] expected;
+        using (var seekableSource = BundledFormatFixtures.Open(fixture.FileName))
+        using (var seekable = Decoder.OpenStream(seekableSource, SampleFormat.S24))
+            expected = DecodeAll(seekable);
+
+        using var forward = new ForwardOnlyStream(BundledFormatFixtures.Open(fixture.FileName));
+        using var decoder = Decoder.OpenStream(forward, SampleFormat.S24);
+        var pcm = DecodeAll(decoder);
+
+        Expect(pcm.Length == expected.Length, $"{pcm.Length} bytes, wanted {expected.Length}");
+        Expect(pcm.AsSpan().SequenceEqual(expected), "the unseekable stream decoded differently");
+        return $"{pcm.Length} bytes, identical";
+    }
+
+    // The tag is accepted only where the audio ends, so bytes between the
+    // two remain damage.
+    private static string JunkBeforeWavPackTagFaults()
+    {
+        byte[] original;
+        using (var source = BundledFormatFixtures.Open("tagged.wv"))
+        using (var copy = new MemoryStream())
+        {
+            source.CopyTo(copy);
+            original = copy.ToArray();
+        }
+
+        var tagStart = original.AsSpan().IndexOf("APETAGEX"u8);
+        Expect(tagStart > 0, "tagged.wv has no APE tag");
+
+        var damaged = new byte[original.Length + 32];
+        original.AsSpan(0, tagStart).CopyTo(damaged);
+        damaged.AsSpan(tagStart, 32).Fill(0x5A);
+        original.AsSpan(tagStart).CopyTo(damaged.AsSpan(tagStart + 32));
+
+        using var forward = new ForwardOnlyStream(new MemoryStream(damaged));
+        using var decoder = Decoder.OpenStream(forward, SampleFormat.S16);
+        try
+        {
+            DecodeAll(decoder);
+        }
+        catch (DecodeException e)
+        {
+            return e.Message;
+        }
+
+        throw new CheckFailedException("junk before the tag ended the stream quietly");
     }
 
     // Resampling from 44.1kHz is what most music libraries need. The ramp
