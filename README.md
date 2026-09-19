@@ -38,22 +38,28 @@ dotnet add package FFAudio.NET.macOS      # or .Windows, .Linux, .iOS, .Android
 ```sh
 native/build-all.sh                 # everything supported by this host
 native/build-all.sh macos ios       # selected targets
+native/build-all.sh --help          # every option
 ```
 
 macOS and iOS require a Mac, Linux requires a Linux host, and Android requires
-`ANDROID_NDK_HOME`. On Windows, use PowerShell and MSVC:
+an NDK, passed with `--ndk PATH`. On Windows, use PowerShell and MSVC:
 
 ```powershell
 native/windows/build.ps1
+native/windows/build.ps1 -Help
 ```
 
 Development builds on macOS and Linux use the FFmpeg found through
-`pkg-config`. Use `FFAUDIO_STATIC=1` for a self-contained build intended for
+`pkg-config`. Use `--static` for a self-contained build intended for
 distribution:
 
 ```sh
-FFAUDIO_STATIC=1 native/build-all.sh macos
+native/build-all.sh --static macos
 ```
+
+Every script under `native/` takes `--help`, which lists its options. Each
+option also has an environment variable, shown in the help (`--static` is
+`FFAUDIO_STATIC=1`), which is useful in CI.
 
 Native outputs are written to `native/artifacts/<platform>/`.
 
@@ -198,15 +204,18 @@ To rebuild FFmpeg and the native library with the default LGPL configuration:
 
 ```sh
 # macOS or Linux shipping build
-FFAUDIO_REBUILD_FFMPEG=1 FFAUDIO_STATIC=1 native/build-all.sh macos
+native/build-all.sh --rebuild-ffmpeg --static macos
 
 # iOS or Android
-FFAUDIO_REBUILD_FFMPEG=1 native/build-all.sh ios
+native/build-all.sh --rebuild-ffmpeg ios
 ```
 
 Replace `macos` with `linux` or `ios` with `android` as needed. Android also
-requires `ANDROID_NDK_HOME`. `FFAUDIO_REBUILD_FFMPEG=1` is important because
-the scripts otherwise reuse an existing FFmpeg build.
+needs `--ndk PATH`. `--rebuild-ffmpeg` is important because the scripts
+otherwise reuse an existing FFmpeg build of the same version and variant.
+Each FFmpeg version is kept in its own folder under
+`native/<platform>/ffmpeg/prefix/`, so changing `--ffmpeg-version` builds the
+new one without `--rebuild-ffmpeg`; changing `--configure-flags` does need it.
 
 You may pass additional FFmpeg configure flags on the command line. Because
 GPL and nonfree builds use different redistribution terms, they also require
@@ -214,16 +223,12 @@ an explicit acknowledgment:
 
 ```sh
 # Build FFmpeg under the GPL instead of the LGPL
-FFAUDIO_REBUILD_FFMPEG=1 \
-FFAUDIO_ALLOW_NON_LGPL=1 \
-FFAUDIO_FFMPEG_CONFIGURE_FLAGS="--enable-gpl" \
-native/build-all.sh ios
+native/build-all.sh --rebuild-ffmpeg --allow-non-lgpl \
+    --configure-flags="--enable-gpl" ios
 
 # Build a nonfree FFmpeg
-FFAUDIO_REBUILD_FFMPEG=1 \
-FFAUDIO_ALLOW_NON_LGPL=1 \
-FFAUDIO_FFMPEG_CONFIGURE_FLAGS="--enable-nonfree" \
-native/build-all.sh ios
+native/build-all.sh --rebuild-ffmpeg --allow-non-lgpl \
+    --configure-flags="--enable-nonfree" ios
 ```
 
 `--enable-gpl` changes the resulting FFmpeg build from LGPL to GPL. You may
@@ -233,8 +238,7 @@ with incompatible licenses; FFmpeg marks the resulting binary as
 unredistributable, so it must not be included in a distributed package or
 application.
 
-Multiple configure flags can be separated by spaces in
-`FFAUDIO_FFMPEG_CONFIGURE_FLAGS`. The override applies to source builds for
+Multiple configure flags can be separated by spaces in `--configure-flags`. The override applies to source builds for
 macOS, Linux, iOS, and Android. Windows uses a pinned prebuilt FFmpeg; to use a
 different configuration, build FFmpeg separately and pass its prefix to:
 

@@ -12,17 +12,25 @@
 # and a toolchain file would only be a second description of the same compile.
 set -euo pipefail
 
-: "${ANDROID_NDK_HOME:?Set ANDROID_NDK_HOME to an installed NDK, e.g. ~/Library/Android/sdk/ndk/28.2.13676358}"
-
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 native="$(cd "$here/.." && pwd)"
+
+ffaudio_usage="native/android/build.sh [options]"
+ffaudio_about="Builds libffaudio.so for every Android ABI into native/artifacts/android/,
+from the FFmpeg native/android/build-ffmpeg.sh built."
+ffaudio_options="variant ndk"
+ffaudio_operands=""
+source "$native/options.sh"
+ffaudio_parse_options "$@"
+set -- "${ffaudio_args[@]+"${ffaudio_args[@]}"}"
+: "${ANDROID_NDK_HOME:?Pass --ndk PATH (or set ANDROID_NDK_HOME) to an installed NDK, e.g. ~/Library/Android/sdk/ndk/28.2.13676358}"
 root="$(cd "$here/../.." && pwd)"
 build="$here/build"
 # Which FFmpeg gets linked in is FFAUDIO_VARIANT's answer, not this script's:
 # build-ffmpeg.sh keeps a prefix per variant, so switching between them is a
 # relink rather than another forty minutes.
 source "$native/codec-set.sh"
-prefixes="$here/ffmpeg/prefix/$ffaudio_variant"
+prefixes="$(ffaudio_prefix_root "$here/ffmpeg")"
 api=21
 
 # Must match Native.Library, which is the literal DllImport string. Named
@@ -39,7 +47,7 @@ esac
 toolchain="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/$host_tag/bin"
 
 if [ ! -f "$prefixes/arm64-v8a/lib/libavformat.a" ]; then
-    echo "No $ffaudio_variant FFmpeg for Android yet - run $here/build-ffmpeg.sh first." >&2
+    echo "No $ffaudio_variant FFmpeg $ffaudio_ffmpeg_version for Android yet - run $here/build-ffmpeg.sh with the same options first." >&2
     exit 1
 fi
 

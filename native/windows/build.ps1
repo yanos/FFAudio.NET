@@ -1,3 +1,32 @@
+<#
+.SYNOPSIS
+Builds ffaudio.dll for Windows into native/artifacts/windows/, with the four
+FFmpeg DLLs it imports beside it.
+
+.DESCRIPTION
+Downloads a pinned, checksummed LGPL FFmpeg 9.0.2 build and links the facade
+against it, unless -Prefix names an FFmpeg of your own. Windows does not build
+FFmpeg from source, so the FFmpeg options of the shell scripts (--variant,
+--configure-flags and the rest) do not apply here; to change how FFmpeg is
+configured, build it yourself and pass its prefix.
+
+.PARAMETER Prefix
+An FFmpeg prefix to build against - with include/, lib/ and bin/ - instead of
+the pinned download.
+
+.PARAMETER Configuration
+The CMake build configuration. Release by default.
+
+.PARAMETER Help
+Show this help. --help, -h and -? work too.
+
+.EXAMPLE
+native/windows/build.ps1
+
+.EXAMPLE
+native/windows/build.ps1 -Prefix C:\my\own\ffmpeg
+#>
+
 # Builds ffaudio.dll for Windows, and puts the FFmpeg DLLs it needs
 # beside it.
 #
@@ -21,14 +50,29 @@
 # See ../README.md, whose licensing section applies here as much as anywhere:
 # what makes this build distributable is that FFmpeg stays a set of DLLs the
 # user can replace, and that this repo carries the source offer.
-[CmdletBinding()]
+# Not positional, so a stray argument is an error rather than quietly
+# becoming -Prefix; and the leftovers are collected so the Unix spelling,
+# --help, can be answered instead of rejected.
+[CmdletBinding(PositionalBinding = $false)]
 param(
     # An FFmpeg prefix to build against - include/, lib/ and bin/ - instead of
     # the pinned download. For bisecting against a differently-built FFmpeg,
     # the way FFAUDIO_LIBRARY does at run time.
     [string]$Prefix,
-    [string]$Configuration = "Release"
+    [string]$Configuration = "Release",
+    [switch]$Help,
+    [Parameter(ValueFromRemainingArguments = $true)]
+    [string[]]$Rest
 )
+
+if ($Help -or ($Rest | Where-Object { $_ -in "--help", "-help", "/?" })) {
+    Get-Help $PSCommandPath -Detailed
+    exit 0
+}
+if ($Rest) {
+    Write-Error "Unknown argument(s): $($Rest -join ' '). Run native/windows/build.ps1 -Help for the options." -ErrorAction Continue
+    exit 2
+}
 
 $ErrorActionPreference = "Stop"
 
@@ -55,7 +99,7 @@ $out = Join-Path $root "native/artifacts/windows"
 #
 # To move to another FFmpeg: take the win64-lgpl-shared zip for that release
 # from BtbN, upload it to a new ffmpeg-win64-<version> release here, and bump
-# the three lines below along with FFAUDIO_FFMPEG_VERSION in the other builds.
+# the three lines below along with ffaudio_ffmpeg_version in ../codec-set.sh.
 $release = "ffmpeg-win64-9.0.2"
 $asset = "ffmpeg-n9.0.1-84-g946fcce07b-win64-lgpl-shared-9.0.zip"
 $sha256 = "a2a50423b631cb51e91c2668c16a4807197c50d1f5fc56dd4516ca188a0d731f"

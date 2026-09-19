@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Builds a static, LGPL FFmpeg by default for *this* machine - macOS or Linux, host
-# architecture - into native/<platform>/ffmpeg/prefix/<variant>/<arch>/.
+# architecture - into native/<platform>/ffmpeg/prefix/<version>/<variant>/<arch>/.
 #
 # The desktop equivalent of ios/build-ffmpeg.sh and android/build-ffmpeg.sh,
 # and it exists for a reason those two never had. A phone has no FFmpeg to
@@ -13,25 +13,35 @@
 # consumer's machine while every test passes on the machine that built it.
 #
 # So a shipping desktop native links FFmpeg in, the same way the phones do, and
-# depends on nothing but libSystem or libc. `FFAUDIO_STATIC=1` in
+# depends on nothing but libSystem or libc. `--static` on
 # macos/build.sh or linux/build.sh is what asks for that, and this is the
 # prefix it asks for.
 #
-#     FFAUDIO_STATIC=1 native/macos/build.sh          # builds this first, then links it
-#     native/host-ffmpeg.sh                           # or just the prefix
-#     FFAUDIO_VARIANT=full native/host-ffmpeg.sh      # every audio decoder
-#     FFAUDIO_REBUILD_FFMPEG=1 native/host-ffmpeg.sh  # redo an existing prefix
+#     native/macos/build.sh --static             # builds this first, then links it
+#     native/host-ffmpeg.sh                      # or just the prefix
+#     native/host-ffmpeg.sh --variant full       # every audio decoder
+#     native/host-ffmpeg.sh --rebuild-ffmpeg     # redo an existing prefix
+#     native/host-ffmpeg.sh --help               # every option
 #
 # Not the default, and that is deliberate: a developer editing ffaudio.c wants
 # a relink against the FFmpeg already on the machine, not tens of minutes of
 # libavcodec. CI asks for it, because CI is what produces the package.
 #
 # Slow the first time and idempotent after: a prefix with a libavformat.a in it
-# is left alone unless FFAUDIO_REBUILD_FFMPEG is set.
+# is left alone unless --rebuild-ffmpeg is passed.
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-version="${FFAUDIO_FFMPEG_VERSION:-9.0.2}"
+
+ffaudio_usage="native/host-ffmpeg.sh [options]"
+ffaudio_about="Builds a static LGPL FFmpeg for this machine (macOS or Linux) into
+native/<platform>/ffmpeg/prefix/. macos/build.sh and linux/build.sh run it
+for you under --static."
+ffaudio_options="variant rebuild-ffmpeg ffmpeg-version configure-flags allow-non-lgpl macos-deployment-target"
+ffaudio_operands=""
+source "$here/options.sh"
+ffaudio_parse_options "$@"
+set -- "${ffaudio_args[@]+"${ffaudio_args[@]}"}"
 
 case "$(uname -s)" in
     Darwin) platform=macos ;;
@@ -47,10 +57,11 @@ work="$here/$platform/ffmpeg"
 # what rejects an FFAUDIO_VARIANT that does not exist, before anything is
 # downloaded or configured.
 source "$here/codec-set.sh"
+version="$ffaudio_ffmpeg_version"
 
-prefix="$work/prefix/$ffaudio_variant/$arch"
+prefix="$(ffaudio_prefix_root "$work")/$arch"
 if [ -f "$prefix/lib/libavformat.a" ] && [ -z "${FFAUDIO_REBUILD_FFMPEG:-}" ]; then
-    echo "=== $ffaudio_variant FFmpeg for $platform/$arch already built ($prefix) - set FFAUDIO_REBUILD_FFMPEG=1 to redo ==="
+    echo "=== $ffaudio_variant FFmpeg $version for $platform/$arch already built ($prefix) - pass --rebuild-ffmpeg to redo ==="
     exit 0
 fi
 
@@ -174,4 +185,4 @@ fi
 )
 
 echo "-> $prefix"
-echo "Now run native/$platform/build.sh with FFAUDIO_STATIC=1 to link it in."
+echo "Now run native/$platform/build.sh --static to link it in."

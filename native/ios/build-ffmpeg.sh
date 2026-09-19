@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Cross-compiles a static, LGPL-only FFmpeg for iOS - device arm64 and Apple
-# Silicon simulator arm64 - into native/ffmpeg/ios/ffmpeg/prefix/<slice>/.
+# Silicon simulator arm64 - into native/ios/ffmpeg/prefix/<version>/<variant>/<slice>/.
 #
 # This exists because iOS has no package manager: macOS and Linux find an
 # FFmpeg through pkg-config and link against it, and there is nothing here to
@@ -13,17 +13,28 @@
 # --disable-everything and an explicit list. That is mostly about size, since
 # the result is linked into an app bundle, but it is also the honest statement
 # of what the phone can play. The list lives in ../codec-set.sh, shared with
-# the Android build and with whatever comes after it, and FFAUDIO_VARIANT picks
+# the Android build and with whatever comes after it, and --variant picks
 # between the music-library `slim` set and a `full` one that decodes every
 # audio format FFmpeg has.
 #
 # Slow - tens of minutes for both slices - and idempotent: an existing prefix
-# with a libavformat.a in it is left alone unless FFAUDIO_REBUILD_FFMPEG is set.
+# with a libavformat.a in it is left alone unless --rebuild-ffmpeg is passed.
+# --help lists every option.
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+ffaudio_usage="native/ios/build-ffmpeg.sh [options]"
+ffaudio_about="Cross-compiles a static LGPL FFmpeg for iOS, device and simulator. Run
+native/ios/build.sh afterwards to build ffaudio.framework from it."
+ffaudio_options="variant rebuild-ffmpeg ffmpeg-version configure-flags allow-non-lgpl"
+ffaudio_operands=""
+source "$here/../options.sh"
+ffaudio_parse_options "$@"
+set -- "${ffaudio_args[@]+"${ffaudio_args[@]}"}"
 work="$here/ffmpeg"
-version="${FFAUDIO_FFMPEG_VERSION:-9.0.2}"
+source "$here/../codec-set.sh"
+version="$ffaudio_ffmpeg_version"
 deployment_target=12.2
 
 mkdir -p "$work"
@@ -35,12 +46,11 @@ if [ ! -d "$work/ffmpeg-$version" ]; then
 fi
 
 # The decoder and demuxer set, and which variant of it this build gets.
-# FFAUDIO_VARIANT=full asks for every audio decoder FFmpeg has instead of the
+# --variant full asks for every audio decoder FFmpeg has instead of the
 # music-library list; see ../codec-set.sh, which is also the reason this list
 # is no longer written out twice, once here and once for the other phone.
 # The flags are rendered before anything is configured so a variant that does
 # not exist fails now rather than three slices in.
-source "$here/../codec-set.sh"
 components=()
 while IFS= read -r flag; do components+=("$flag"); done \
     < <(ffaudio_component_flags "$work/ffmpeg-$version")
@@ -50,9 +60,9 @@ build_slice() {
     local triple="$2" # arm64-apple-ios12.2 [-simulator]
     local slice="$3"  # ios-device | ios-simulator
 
-    local prefix="$work/prefix/$ffaudio_variant/$slice"
+    local prefix="$(ffaudio_prefix_root "$work")/$slice"
     if [ -f "$prefix/lib/libavformat.a" ] && [ -z "${FFAUDIO_REBUILD_FFMPEG:-}" ]; then
-        echo "=== $slice already built ($prefix) - set FFAUDIO_REBUILD_FFMPEG=1 to redo ==="
+        echo "=== FFmpeg $version for $slice already built ($prefix) - pass --rebuild-ffmpeg to redo ==="
         return
     fi
 
@@ -103,4 +113,4 @@ build_slice() {
 build_slice iphoneos "arm64-apple-ios${deployment_target}" ios-device
 build_slice iphonesimulator "arm64-apple-ios${deployment_target}-simulator" ios-simulator
 
-echo "Done. Now run native/ffmpeg/ios/build.sh to wrap these in ffaudio.framework."
+echo "Done. Now run native/ios/build.sh to wrap these in ffaudio.framework."

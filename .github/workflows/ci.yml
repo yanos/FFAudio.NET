@@ -202,11 +202,11 @@ jobs:
 
       - name: Build the shipping native (Linux)
         if: matrix.platform == 'linux'
-        run: FFAUDIO_STATIC=1 native/linux/build.sh
+        run: native/linux/build.sh --static
 
       - name: Build the shipping native (macOS)
         if: matrix.platform == 'macos'
-        run: FFAUDIO_STATIC=1 native/macos/build.sh
+        run: native/macos/build.sh --static
 
       # The same checks, against the binary that is about to be packed - and
       # this time the licence gate is on. It could not be before: apt's and
@@ -250,7 +250,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: native/${{ matrix.platform }}/ffmpeg/prefix
-          key: ffmpeg-${{ matrix.platform }}-${{ hashFiles(format('native/{0}/build-ffmpeg.sh', matrix.platform)) }}
+          key: ffmpeg-${{ matrix.platform }}-${{ hashFiles(format('native/{0}/build-ffmpeg.sh', matrix.platform), 'native/codec-set.sh') }}
 
       - name: Build FFmpeg (iOS)
         if: matrix.platform == 'ios'

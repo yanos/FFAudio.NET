@@ -3,8 +3,9 @@
 #
 # Two ways, and which one you want depends on where the result is going:
 #
-#     native/macos/build.sh                    # against the FFmpeg on this machine
-#     FFAUDIO_STATIC=1 native/macos/build.sh   # against one this repo built, linked in
+#     native/macos/build.sh             # against the FFmpeg on this machine
+#     native/macos/build.sh --static    # against one this repo built, linked in
+#     native/macos/build.sh --help      # every option
 #
 # The default finds FFmpeg through pkg-config - MacPorts (/opt/local) or
 # Homebrew - and links against it. Fast, and it is what a developer editing
@@ -14,7 +15,7 @@
 # absolute path of the one it found, so the result runs on this machine and
 # nowhere else.
 #
-# FFAUDIO_STATIC=1 is the shipping build. host-ffmpeg.sh cross-compiles nothing
+# --static is the shipping build. host-ffmpeg.sh cross-compiles nothing
 # - it is the host - but it does everything else the phone builds do: a
 # --disable-everything LGPL FFmpeg, asserted GPL-free from the generated
 # config.h, linked into the façade so the only dependency left is libSystem.
@@ -25,6 +26,16 @@ set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 native="$(cd "$here/.." && pwd)"
+
+ffaudio_usage="native/macos/build.sh [options] [-- cmake-args...]"
+ffaudio_about="Builds libffaudio.dylib into native/artifacts/macos/. By default it links the
+FFmpeg pkg-config finds (MacPorts or Homebrew); --static builds its own and
+links it in, and the FFmpeg options below apply to that build."
+ffaudio_options="static variant rebuild-ffmpeg ffmpeg-version configure-flags allow-non-lgpl archs macos-deployment-target"
+ffaudio_operands="Arguments after -- are passed to cmake."
+source "$native/options.sh"
+ffaudio_parse_options "$@"
+set -- "${ffaudio_args[@]+"${ffaudio_args[@]}"}"
 root="$(cd "$here/../.." && pwd)"
 build="$here/build"
 
@@ -39,12 +50,12 @@ if [ -n "${FFAUDIO_STATIC:-}" ]; then
     # cleanly and then failing to find symbols in an archive that was never
     # built for the arch that was asked for.
     if [ -n "${FFAUDIO_ARCHS:-}" ] && [ "$FFAUDIO_ARCHS" != "$arch" ]; then
-        echo "FFAUDIO_ARCHS=$FFAUDIO_ARCHS, but a static build is the host's own architecture ($arch) - host-ffmpeg.sh does not cross-compile." >&2
+        echo "--archs $FFAUDIO_ARCHS was asked for, but a static build is the host's own architecture ($arch) - host-ffmpeg.sh does not cross-compile." >&2
         exit 1
     fi
 
     "$native/host-ffmpeg.sh"
-    prefix="$here/ffmpeg/prefix/$ffaudio_variant/$arch"
+    prefix="$(ffaudio_prefix_root "$here/ffmpeg")/$arch"
 
     # PKG_CONFIG_LIBDIR replaces the default search path where PKG_CONFIG_PATH
     # only prepends to it, and the system FFmpeg is on that default path. So

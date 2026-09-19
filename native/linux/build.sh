@@ -5,23 +5,34 @@
 #
 #     sudo apt-get install -y libavformat-dev libavcodec-dev libavutil-dev \
 #                             libswresample-dev
-#     native/linux/build.sh                    # against the distro's FFmpeg
+#     native/linux/build.sh             # against the distro's FFmpeg
 #
 #     sudo apt-get install -y nasm
-#     FFAUDIO_STATIC=1 native/linux/build.sh   # against one this repo built, linked in
+#     native/linux/build.sh --static    # against one this repo built, linked in
+#     native/linux/build.sh --help      # every option
 #
 # The default links the distro's FFmpeg through pkg-config. That build is
 # GPL-enabled, so it is a development build only - and the .so it produces
 # carries a DT_NEEDED for libavformat.so.<n>, which is a promise the machine
 # that restores this package has no reason to keep.
 #
-# FFAUDIO_STATIC=1 is the shipping build: a --disable-everything LGPL FFmpeg
+# --static is the shipping build: a --disable-everything LGPL FFmpeg
 # from host-ffmpeg.sh, asserted GPL-free from its own config.h, linked in so
 # the only thing left in DT_NEEDED is libc and libm. See ../../README.md.
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 native="$(cd "$here/.." && pwd)"
+
+ffaudio_usage="native/linux/build.sh [options] [-- cmake-args...]"
+ffaudio_about="Builds libffaudio.so into native/artifacts/linux/. By default it links the
+distro's FFmpeg through pkg-config; --static builds its own and links it in,
+and the FFmpeg options below apply to that build."
+ffaudio_options="static variant rebuild-ffmpeg ffmpeg-version configure-flags allow-non-lgpl"
+ffaudio_operands="Arguments after -- are passed to cmake."
+source "$native/options.sh"
+ffaudio_parse_options "$@"
+set -- "${ffaudio_args[@]+"${ffaudio_args[@]}"}"
 root="$(cd "$here/../.." && pwd)"
 build="$here/build"
 
@@ -31,7 +42,7 @@ if [ -n "${FFAUDIO_STATIC:-}" ]; then
     "$native/host-ffmpeg.sh"
 
     source "$native/codec-set.sh"
-    prefix="$here/ffmpeg/prefix/$ffaudio_variant/$(uname -m)"
+    prefix="$(ffaudio_prefix_root "$here/ffmpeg")/$(uname -m)"
 
     # The exclusive form, not PKG_CONFIG_PATH: that one only prepends to the
     # default search path, and /usr/lib/pkgconfig is on it. A static build that

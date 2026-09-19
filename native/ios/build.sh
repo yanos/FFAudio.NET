@@ -21,20 +21,29 @@ set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 native="$(cd "$here/.." && pwd)"
+
+ffaudio_usage="native/ios/build.sh [options]"
+ffaudio_about="Builds ffaudio.framework for iOS device and simulator into
+native/artifacts/ios/, from the FFmpeg native/ios/build-ffmpeg.sh built."
+ffaudio_options="variant"
+ffaudio_operands=""
+source "$native/options.sh"
+ffaudio_parse_options "$@"
+set -- "${ffaudio_args[@]+"${ffaudio_args[@]}"}"
 root="$(cd "$here/../.." && pwd)"
 build="$here/build"
 # Which FFmpeg gets linked in is FFAUDIO_VARIANT's answer, not this script's:
 # build-ffmpeg.sh keeps a prefix per variant, so switching between them is a
 # relink rather than another forty minutes.
 source "$native/codec-set.sh"
-prefixes="$here/ffmpeg/prefix/$ffaudio_variant"
+prefixes="$(ffaudio_prefix_root "$here/ffmpeg")"
 deployment_target=12.2
 
 # Must match Native.Library, which is the literal DllImport string.
 framework=ffaudio
 
 if [ ! -f "$prefixes/ios-device/lib/libavformat.a" ]; then
-    echo "No $ffaudio_variant FFmpeg for iOS yet - run $here/build-ffmpeg.sh first." >&2
+    echo "No $ffaudio_variant FFmpeg $ffaudio_ffmpeg_version for iOS yet - run $here/build-ffmpeg.sh with the same options first." >&2
     exit 1
 fi
 

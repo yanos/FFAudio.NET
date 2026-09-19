@@ -42,10 +42,15 @@ ffaudio_slim_decoders="mp3,mp3float,aac,aac_latm,alac,flac,vorbis,opus,wavpack,a
 ffaudio_slim_demuxers="mov,mp3,flac,wav,w64,ogg,matroska,aac,ape,wv,aiff,dsf"
 ffaudio_slim_parsers="mpegaudio,aac,aac_latm,flac,vorbis,opus"
 
+# The FFmpeg every source build compiles, written once. It used to be written
+# in each of the three FFmpeg scripts, and the scripts that link against their
+# output need it too, because it is part of the path they read from.
+ffaudio_ffmpeg_version="${FFAUDIO_FFMPEG_VERSION:-9.0.2}"
+
 ffaudio_variant="${FFAUDIO_VARIANT:-slim}"
 case "$ffaudio_variant" in
     slim|full) ;;
-    *) echo "FFAUDIO_VARIANT must be 'slim' or 'full', not '$ffaudio_variant'." >&2; return 1 2>/dev/null || exit 1 ;;
+    *) echo "--variant (FFAUDIO_VARIANT) must be 'slim' or 'full', not '$ffaudio_variant'." >&2; return 1 2>/dev/null || exit 1 ;;
 esac
 
 # Optional FFmpeg configure switches supplied by the caller. This is primarily
@@ -56,6 +61,19 @@ ffaudio_extra_configure_flags=()
 if [ -n "${FFAUDIO_FFMPEG_CONFIGURE_FLAGS:-}" ]; then
     read -r -a ffaudio_extra_configure_flags <<< "$FFAUDIO_FFMPEG_CONFIGURE_FLAGS"
 fi
+
+# Where a built FFmpeg lives, given a platform's ffmpeg/ directory: one folder
+# per version, then per variant, then per architecture or slice.
+#
+# The version is in the path because an existing build is reused without being
+# rebuilt, and reuse used to be decided by the folder alone. A machine that had
+# built 7.1.1 kept linking 7.1.1 after every script said 9.0.2, with nothing to
+# say so; the iOS framework built on the Mac this was written on was exactly
+# that. Now a new version finds an empty folder and builds, and going back to
+# an old one is a relink, the same as switching variant.
+ffaudio_prefix_root() {
+    echo "$1/prefix/$ffaudio_ffmpeg_version/$ffaudio_variant"
+}
 
 # Every audio decoder in an unpacked FFmpeg source tree, read out of
 # libavcodec/allcodecs.c.
@@ -124,7 +142,7 @@ ffaudio_component_flags() {
 
 # Repository builds are LGPL-only by default. A caller may deliberately choose
 # another configuration, but must acknowledge the different distribution
-# terms with FFAUDIO_ALLOW_NON_LGPL=1. Checking config.h catches both explicit
+# terms with --allow-non-lgpl. Checking config.h catches both explicit
 # flags and licensing changes pulled in by other configure options.
 ffaudio_assert_lgpl() {
     local build_dir="$1"
@@ -135,7 +153,7 @@ ffaudio_assert_lgpl() {
     for flag in GPL NONFREE; do
         if grep -q "^#define CONFIG_$flag 1\$" "$header"; then
             if [ -z "${FFAUDIO_ALLOW_NON_LGPL:-}" ]; then
-                echo "This FFmpeg configured with CONFIG_$flag set. Set FFAUDIO_ALLOW_NON_LGPL=1 to acknowledge the changed redistribution terms; see README.md." >&2
+                echo "This FFmpeg configured with CONFIG_$flag set. Pass --allow-non-lgpl (or set FFAUDIO_ALLOW_NON_LGPL=1) to accept the different redistribution terms; see README.md." >&2
                 return 1
             fi
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Cross-compiles a static, LGPL-only FFmpeg for every ABI Android ships,
-# into native/ffmpeg/android/ffmpeg/prefix/<abi>/.
+# into native/android/ffmpeg/prefix/<version>/<variant>/<abi>/.
 #
 # Same reason as ios/build-ffmpeg.sh: a phone has no package manager, so there
 # is nothing for pkg-config to find and the decoder has to bring its own
@@ -10,17 +10,27 @@
 #
 # What it may decode is ../codec-set.sh's, shared with the iOS build rather
 # than restated here: what a phone can play should not depend on which phone.
-# FFAUDIO_VARIANT picks between the music-library `slim` set and a `full` one.
+# --variant picks between the music-library `slim` set and a `full` one.
 #
 # Slow - tens of minutes across three ABIs - and idempotent: a prefix that
-# already has a libavformat.a is left alone unless FFAUDIO_REBUILD_FFMPEG is set.
+# already has a libavformat.a is left alone unless --rebuild-ffmpeg is passed.
+# --help lists every option.
 set -euo pipefail
 
-: "${ANDROID_NDK_HOME:?Set ANDROID_NDK_HOME to an installed NDK, e.g. ~/Library/Android/sdk/ndk/28.2.13676358}"
-
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+ffaudio_usage="native/android/build-ffmpeg.sh [options]"
+ffaudio_about="Cross-compiles a static LGPL FFmpeg for arm64-v8a, armeabi-v7a and x86_64.
+Run native/android/build.sh afterwards to build libffaudio.so from it."
+ffaudio_options="variant rebuild-ffmpeg ffmpeg-version configure-flags allow-non-lgpl ndk"
+ffaudio_operands=""
+source "$here/../options.sh"
+ffaudio_parse_options "$@"
+set -- "${ffaudio_args[@]+"${ffaudio_args[@]}"}"
+: "${ANDROID_NDK_HOME:?Pass --ndk PATH (or set ANDROID_NDK_HOME) to an installed NDK, e.g. ~/Library/Android/sdk/ndk/28.2.13676358}"
 work="$here/ffmpeg"
-version="${FFAUDIO_FFMPEG_VERSION:-9.0.2}"
+source "$here/../codec-set.sh"
+version="$ffaudio_ffmpeg_version"
 
 # 21 rather than the csproj's minSdk of 23, to match native/miniaudio/android's
 # API level exactly: two native libraries in one APK disagreeing about their
@@ -45,12 +55,11 @@ if [ ! -d "$work/ffmpeg-$version" ]; then
 fi
 
 # The decoder and demuxer set, and which variant of it this build gets.
-# FFAUDIO_VARIANT=full asks for every audio decoder FFmpeg has instead of the
+# --variant full asks for every audio decoder FFmpeg has instead of the
 # music-library list; see ../codec-set.sh, which is also the reason this list
 # is no longer written out twice, once here and once for the other phone.
 # The flags are rendered before anything is configured so a variant that does
 # not exist fails now rather than three slices in.
-source "$here/../codec-set.sh"
 components=()
 while IFS= read -r flag; do components+=("$flag"); done \
     < <(ffaudio_component_flags "$work/ffmpeg-$version")
@@ -62,9 +71,9 @@ build_abi() {
     shift 3
     local extra=("$@")
 
-    local prefix="$work/prefix/$ffaudio_variant/$abi"
+    local prefix="$(ffaudio_prefix_root "$work")/$abi"
     if [ -f "$prefix/lib/libavformat.a" ] && [ -z "${FFAUDIO_REBUILD_FFMPEG:-}" ]; then
-        echo "=== $abi already built ($prefix) - set FFAUDIO_REBUILD_FFMPEG=1 to redo ==="
+        echo "=== FFmpeg $version for $abi already built ($prefix) - pass --rebuild-ffmpeg to redo ==="
         return
     fi
 
@@ -114,4 +123,4 @@ build_abi arm64-v8a   aarch64 aarch64-linux-android
 build_abi armeabi-v7a arm     armv7a-linux-androideabi --cpu=armv7-a --enable-thumb
 build_abi x86_64      x86_64  x86_64-linux-android     --disable-x86asm
 
-echo "Done. Now run native/ffmpeg/android/build.sh to link these into libffaudio.so."
+echo "Done. Now run native/android/build.sh to link these into libffaudio.so."
