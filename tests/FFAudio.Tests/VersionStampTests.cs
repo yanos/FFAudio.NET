@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using System.Reflection;
 using System.Text.RegularExpressions;
 
@@ -31,7 +32,12 @@ public class VersionStampTests
         var match = Stamp();
         var version = match.Value[..match.Value.IndexOf('+')];
 
-        Assert.NotEqual("1.0.0", version);
+        // Absent when MinVer did not run and the SDK's 1.0.0 default was stamped instead.
+        var minver = Library.GetCustomAttributes<AssemblyMetadataAttribute>()
+            .SingleOrDefault(a => a.Key == "MinVerVersion")?.Value;
+        Assert.False(string.IsNullOrEmpty(minver), "MinVer did not stamp the library.");
+        Assert.Equal(minver, version);
+
         Assert.False(
             version.StartsWith("0.0.0-alpha.0", StringComparison.Ordinal),
             $"\"{version}\" is MinVer's no-tags fallback: the checkout has no history. " +
