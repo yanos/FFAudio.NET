@@ -70,6 +70,18 @@ public static class DecodeChecks
             results.Add(Run("a stream carries metadata", () => StreamCarriesMetadata(tagged)));
             results.Add(Run("reading metadata does not disturb decoding", () => MetadataDoesNotDisturbDecode(tagged)));
 
+            foreach (var fixture in BundledFormatFixtures.All)
+            {
+                results.Add(Run($"{fixture.Codec} decoding and metadata work in the LGPL build",
+                    () => BundledFormatDecodesAndHasMetadata(fixture)));
+            }
+
+            foreach (var fixture in BundledFormatFixtures.HighFidelity)
+            {
+                results.Add(Run($"{fixture.Codec} preserves 48kHz 24-bit stereo audio",
+                    () => HighFidelityAudioIsPreserved(fixture)));
+            }
+
             results.Add(Run("the binary reports its FFmpeg version and license", FfmpegIdentityIsReported));
             results.Add(Run("the FFmpeg configuration is returned whole", FfmpegConfigurationIsWhole));
             results.Add(Run("the redistribution flag matches the FFmpeg license", RedistributionFlagMatchesLicense));
@@ -625,6 +637,72 @@ public static class DecodeChecks
             Expect(actual[i] == expected[i], $"byte {i} differs after reading metadata");
 
         return $"{actual.Length} bytes";
+    }
+
+    private static string BundledFormatDecodesAndHasMetadata(BundledFormatFixture fixture)
+    {
+        using var source = BundledFormatFixtures.Open(fixture.FileName);
+        using var decoder = Decoder.OpenStream(source, SampleFormat.S16);
+
+        Expect(decoder.Format.Codec == fixture.Codec,
+            $"codec {Quote(decoder.Format.Codec)}, wanted {Quote(fixture.Codec)}");
+        Expect(decoder.Format.Container == fixture.Container,
+            $"container {Quote(decoder.Format.Container)}, wanted {Quote(fixture.Container)}");
+        Expect(decoder.Format.SourceSampleRate == fixture.SampleRate,
+            $"sample rate {decoder.Format.SourceSampleRate}, wanted {fixture.SampleRate}");
+        Expect(decoder.Format.SourceChannels == 1,
+            $"{decoder.Format.SourceChannels} channels, wanted 1");
+        Expect(Tag(decoder, "title") == BundledFormatFixtures.Title,
+            $"title {Quote(Tag(decoder, "title"))}, wanted {Quote(BundledFormatFixtures.Title)}");
+        Expect(Tag(decoder, "artist") == BundledFormatFixtures.Artist,
+            $"artist {Quote(Tag(decoder, "artist"))}, wanted {Quote(BundledFormatFixtures.Artist)}");
+
+        var pcm = DecodeAll(decoder);
+        Expect(pcm.Length > 0, "decoding returned no audio");
+        Expect(pcm.Length % decoder.Format.BytesPerFrame == 0,
+            $"{pcm.Length} decoded bytes are not whole frames of {decoder.Format.BytesPerFrame} bytes");
+
+        return $"{pcm.Length / decoder.Format.BytesPerFrame} mono frames with title and artist";
+    }
+
+    private static string HighFidelityAudioIsPreserved(BundledFormatFixture fixture)
+    {
+        byte[] expected;
+        using (var referenceSource = BundledFormatFixtures.Open(BundledFormatFixtures.HighFidelityReference))
+        using (var reference = Decoder.OpenStream(referenceSource, SampleFormat.S24))
+            expected = DecodeAll(reference);
+
+        var samplesWithLowBits = 0;
+        for (var offset = 0; offset < expected.Length; offset += 3)
+        {
+            if (expected[offset] != 0)
+                samplesWithLowBits++;
+        }
+
+        using var source = BundledFormatFixtures.Open(fixture.FileName);
+        using var decoder = Decoder.OpenStream(source, SampleFormat.S24);
+        var actual = DecodeAll(decoder);
+
+        Expect(decoder.Format.Codec == fixture.Codec,
+            $"codec {Quote(decoder.Format.Codec)}, wanted {Quote(fixture.Codec)}");
+        Expect(decoder.Format.Container == fixture.Container,
+            $"container {Quote(decoder.Format.Container)}, wanted {Quote(fixture.Container)}");
+        Expect(decoder.Format.SourceSampleRate == 48000,
+            $"sample rate {decoder.Format.SourceSampleRate}, wanted 48000");
+        Expect(decoder.Format.SourceBitDepth == 24,
+            $"source depth {decoder.Format.SourceBitDepth}, wanted 24");
+        Expect(decoder.Format.SourceChannels == 2,
+            $"{decoder.Format.SourceChannels} channels, wanted 2");
+        Expect(decoder.Format.SampleFormat == SampleFormat.S24,
+            $"format {decoder.Format.SampleFormat}, wanted S24");
+        Expect(decoder.Format.BytesPerFrame == 6,
+            $"{decoder.Format.BytesPerFrame} bytes per frame, wanted 6");
+        Expect(samplesWithLowBits > expected.Length / 3 / 2,
+            $"only {samplesWithLowBits} of {expected.Length / 3} reference samples use their low byte");
+        Expect(actual.AsSpan().SequenceEqual(expected),
+            $"decoded 24-bit PCM differs from the {expected.Length / 6}-frame reference");
+
+        return $"{actual.Length / 6} stereo frames, bit exact";
     }
 
     private static string FfmpegIdentityIsReported()

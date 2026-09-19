@@ -16,4 +16,8 @@
     <PackageReference Include="FFAudio.NET" Version="$(FFAudioPackageVersion)" />
   </ItemGroup>
 
+  <ItemGroup>
+    <EmbeddedResource Include="Fixtures/*" />
+  </ItemGroup>
+
 </Project>

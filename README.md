@@ -22,6 +22,20 @@ support:
 The .NET Android workload may require an app minimum version above API 21.
 Other operating systems and architectures require a custom native build.
 
+## Format support
+
+FFAudio.NET supports most audio formats that FFmpeg supports, provided the
+corresponding decoder and demuxer are present in the native FFmpeg build. The
+supplied native packages use a music-focused set that includes MP3, AAC, ALAC,
+FLAC, Vorbis, Opus, WavPack, Monkey's Audio, DSD, WAV, AIFF, and compatible
+containers.
+
+Support ultimately depends on how FFmpeg was built. Formats backed by GPL or
+nonfree components are not included in the supplied LGPL builds; see
+[License and redistribution](#license-and-redistribution). A custom build can
+select FFmpeg's broader audio set with `--variant full` or add specific FFmpeg
+configure flags.
+
 ## Install
 
 Add the managed package and the native package for your target platform:

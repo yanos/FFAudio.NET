@@ -112,6 +112,33 @@ public class MetadataTests : IDisposable
         Assert.Equal("wav", wav.Format.Container);
     }
 
+    // These are all available in the default LGPL-only native package.
+    [Theory]
+    [InlineData("tagged.flac", "flac", "flac", 44100)]
+    [InlineData("tagged.mp3", "mp3", "mp3", 44100)]
+    [InlineData("tagged-aac.m4a", "aac", "mov,mp4,m4a,3gp,3g2,mj2", 44100)]
+    [InlineData("tagged-alac.m4a", "alac", "mov,mp4,m4a,3gp,3g2,mj2", 44100)]
+    [InlineData("tagged-vorbis.ogg", "vorbis", "ogg", 44100)]
+    [InlineData("tagged-opus.ogg", "opus", "ogg", 48000)]
+    [InlineData("tagged.wv", "wavpack", "wv", 44100)]
+    public void Bundled_lgpl_formats_decode_and_expose_their_metadata(
+        string fileName, string codec, string container, int sampleRate)
+    {
+        using var source = BundledFormatFixtures.Open(fileName);
+        using var decoder = Decoder.OpenStream(source, SampleFormat.S16);
+
+        Assert.Equal(codec, decoder.Format.Codec);
+        Assert.Equal(container, decoder.Format.Container);
+        Assert.Equal(sampleRate, decoder.Format.SourceSampleRate);
+        Assert.Equal(1, decoder.Format.SourceChannels);
+        Assert.Equal(BundledFormatFixtures.Title, Tag(decoder, "title"));
+        Assert.Equal(BundledFormatFixtures.Artist, Tag(decoder, "artist"));
+
+        var pcm = DecodeAll(decoder);
+        Assert.NotEmpty(pcm);
+        Assert.Equal(0, pcm.Length % decoder.Format.BytesPerFrame);
+    }
+
     // Metadata must work through the managed Stream path.
     [Fact]
     public void A_stream_carries_its_metadata_the_same_way_a_path_does()

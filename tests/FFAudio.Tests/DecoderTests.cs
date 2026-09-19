@@ -57,6 +57,36 @@ public class DecoderTests : IDisposable
         }
     }
 
+    // Lossless compressed formats must preserve meaningful low bits, not only
+    // advertise a high-resolution source in their headers.
+    [Theory]
+    [InlineData("hires-48k.flac", "flac", "flac")]
+    [InlineData("hires-48k-alac.m4a", "alac", "mov,mp4,m4a,3gp,3g2,mj2")]
+    [InlineData("hires-48k.wv", "wavpack", "wv")]
+    public void Lossless_formats_preserve_48kHz_24_bit_stereo_audio(
+        string fileName, string codec, string container)
+    {
+        using var referenceSource = BundledFormatFixtures.Open(BundledFormatFixtures.HighFidelityReference);
+        using var reference = Decoder.OpenStream(referenceSource, SampleFormat.S24);
+        var expected = DecodeAll(reference);
+        var samplesWithLowBits = expected.Where((value, index) => index % 3 == 0 && value != 0).Count();
+
+        using var source = BundledFormatFixtures.Open(fileName);
+        using var decoder = Decoder.OpenStream(source, SampleFormat.S24);
+        var actual = DecodeAll(decoder);
+
+        Assert.Equal(codec, decoder.Format.Codec);
+        Assert.Equal(container, decoder.Format.Container);
+        Assert.Equal(48000, decoder.Format.SourceSampleRate);
+        Assert.Equal(24, decoder.Format.SourceBitDepth);
+        Assert.Equal(2, decoder.Format.SourceChannels);
+        Assert.Equal(SampleFormat.S24, decoder.Format.SampleFormat);
+        Assert.Equal(6, decoder.Format.BytesPerFrame);
+        Assert.True(samplesWithLowBits > expected.Length / 3 / 2,
+            $"Only {samplesWithLowBits} of {expected.Length / 3} reference samples use their low byte");
+        Assert.Equal(expected, actual);
+    }
+
     // S16 conversion should discard the source's low eight bits.
     [Fact]
     public void The_same_source_asked_for_as_16_bit_loses_the_low_bits()
