@@ -78,6 +78,7 @@ public static class DecodeChecks
             results.Add(Run("a stream failure faults instead of ending quietly", () => FailingStreamFaults(path)));
             results.Add(Run("a right format hint opens the stream as named", () => RightHintOpens(path)));
             results.Add(Run("a wrong format hint falls back to probing and says so", () => WrongHintFallsBack(path)));
+            results.Add(Run("a wrong format hint falls back with no logger to tell", () => WrongHintWithoutLogger(path)));
             results.Add(Run("a stream the decoder owns is closed with it", () => OwnedStreamIsClosed(path)));
             results.Add(Run("a failed open closes a stream the decoder owns", () => FailedOpenClosesOwnedStream(directory)));
 
@@ -514,6 +515,24 @@ public static class DecodeChecks
         var pcm = DecodeAll(decoder);
         Expect(pcm.AsSpan().SequenceEqual(expected), "the fallback decoded differently from the path");
         return warnings[0].Message;
+    }
+
+    // The same mislabel with no logger at all, which is the default and the
+    // commonest call. The warning has nowhere to go, and the fallback must not
+    // care: it opens and decodes exactly as it does when someone is listening.
+    private static string WrongHintWithoutLogger(string path)
+    {
+        byte[] expected;
+        using (var fromPath = Decoder.OpenPath(path, SampleFormat.S24))
+            expected = DecodeAll(fromPath);
+
+        using var source = new MemoryStream(File.ReadAllBytes(path));
+        using var decoder = Decoder.OpenStream(source, SampleFormat.S24, formatHint: "flac");
+
+        Expect(decoder.Format.Container == "wav", $"container {Quote(decoder.Format.Container)}");
+        var pcm = DecodeAll(decoder);
+        Expect(pcm.AsSpan().SequenceEqual(expected), "the fallback decoded differently from the path");
+        return $"{pcm.Length} bytes";
     }
 
     // ownsStream is who closes the Stream, and both answers are promises: a

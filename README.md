@@ -7,7 +7,7 @@ seek, close — plus the handful of questions every consumer asks about a file
 it has just opened: its tags, its cover art, its channel layout, what codec
 and container it is, and which FFmpeg is inside the binary. That is the whole
 of it: sixteen C functions over ints and byte buffers, and a small managed
-binding on top. `native/ffaudio.h` is
+binding on top. [`native/ffaudio.h`](native/ffaudio.h) is
 the entire interface and is meant to be read in one sitting.
 
 ```csharp
@@ -479,7 +479,7 @@ tests/checks/FFAudio.Checks.iOS/run.sh                                # iOS Simu
 tests/checks/FFAudio.Checks.Android/run.sh                            # Android emulator
 ```
 
-Thirty-nine checks, the same thirty-nine everywhere: every native-dependent
+Forty checks, the same forty everywhere: every native-dependent
 desktop test runs on the phone too. They cover PCM precision and all delivery
 formats, seeking and end-of-stream behaviour, path and stream inputs, format
 hints and their fallback, stream ownership, invalid and failing inputs and the
@@ -497,7 +497,7 @@ FFAUDIO_PACKAGE_VERSION=0.1.0-alpha.0.9 tests/checks/FFAudio.Checks.Android/run.
 dotnet run --project tests/checks/FFAudio.Checks.Desktop -p:FFAudioPackageVersion=0.1.0-alpha.0.9
 ```
 
-Same thirty-nine checks, same runners, but the binding comes from `FFAudio.NET`
+Same forty checks, same runners, but the binding comes from `FFAudio.NET`
 and the native from this platform's payload package instead of from this tree.
 Point NuGet at the `.nupkg` files first, with a `nuget.config` or
 `dotnet nuget add source`, and make sure `native/artifacts/` is absent:

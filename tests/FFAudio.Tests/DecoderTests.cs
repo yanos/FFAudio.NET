@@ -395,6 +395,20 @@ public class DecoderTests : IDisposable
     }
 
     [Fact]
+    public void A_wrong_format_hint_falls_back_with_no_logger_to_tell()
+    {
+        var path = HiResFixture();
+        using var fromPath = Decoder.OpenPath(path, SampleFormat.S24);
+        var expected = DecodeAll(fromPath);
+
+        using var source = new MemoryStream(File.ReadAllBytes(path));
+        using var decoder = Decoder.OpenStream(source, SampleFormat.S24, formatHint: "flac");
+
+        Assert.Equal("wav", decoder.Format.Container);
+        Assert.Equal(expected, DecodeAll(decoder));
+    }
+
+    [Fact]
     public void A_stream_the_decoder_owns_is_closed_with_it_and_a_borrowed_one_is_not()
     {
         var bytes = File.ReadAllBytes(HiResFixture());
