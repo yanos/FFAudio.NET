@@ -102,9 +102,11 @@ namespace FFAudio
             // this repo's own tests, which run against whatever
             // native/build-all.sh last produced. A consuming app finds the
             // library beside itself on the first candidate and never looks
-            // further.
+            // further. Seven levels is what the deepest of those needs:
+            // tests/checks/<runner>/bin/<configuration>/<tfm>/ is six below
+            // the repo root, and the walk starts at the directory itself.
             var repoRelative = Path.Combine("native", "artifacts", platform, file);
-            var walked = new string[6];
+            var walked = new string[7];
             var directory = baseDirectory;
             for (var i = 0; i < walked.Length; i++)
             {

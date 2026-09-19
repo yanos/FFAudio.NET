@@ -22,7 +22,7 @@ public class MainActivity : Activity
     // one that works somewhere:
     //
     //  - a file in the app's private files directory, which is what
-    //    scripts/android-device-checks.sh reads back through `run-as`. It is
+    //    tests/checks/FFAudio.Checks.Android/run.sh reads back through `run-as`. It is
     //    the reliable one: logcat is a ring buffer shared with the whole
     //    system, so a long transcript competing with a chatty emulator can
     //    lose lines, and a run that decoded everything but reported half its

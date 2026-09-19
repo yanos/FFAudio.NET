@@ -1,7 +1,7 @@
 #!/bin/bash
 # Runs FFAudio.Checks on an Android emulator and answers with an exit code.
 #
-# The Android half of scripts/ios-device-checks.sh, and written to be its twin:
+# The Android half of tests/checks/FFAudio.Checks.iOS/run.sh, and written to be its twin:
 # the same checks FFAudio.Tests runs on this machine, run against the real
 # Android runtime instead. Two platform runs are only worth comparing when the
 # only difference between them is the platform, so when they disagree the
@@ -11,8 +11,16 @@
 # out of an APK for whichever ABI this hardware is, and OpenStream's read and
 # seek trampolines working under AOT rather than the JIT a desktop uses.
 #
-#   scripts/android-device-checks.sh              # first available AVD
-#   scripts/android-device-checks.sh ffaudio_test # by name
+#   tests/checks/FFAudio.Checks.Android/run.sh              # first available AVD
+#   tests/checks/FFAudio.Checks.Android/run.sh ffaudio_test # by name
+#
+# FFAUDIO_PACKAGE_VERSION=0.1.0-alpha.0.9 tests/checks/FFAudio.Checks.Android/run.sh
+#
+# runs the same checks against the packages instead of the tree, exactly as
+# tests/checks/FFAudio.Checks.iOS/run.sh does: the binding from FFAudio.NET and the .so
+# files from FFAudio.NET.Android, declared by that package's buildTransitive
+# .targets rather than by the runner. Point NuGet at wherever the .nupkg files
+# are first, with a nuget.config or `dotnet nuget add source`.
 #
 # The app reports by writing a transcript into its own files directory, which
 # this reads back with `run-as`. logcat is a ring buffer shared with the whole
@@ -24,9 +32,9 @@
 # serial; the app shows the same lines on screen, so a run with no cable
 # attached is still readable.
 set -euo pipefail
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/../../.."
 
-PROJECT="checks/FFAudio.Checks.Android/FFAudio.Checks.Android.csproj"
+PROJECT="tests/checks/FFAudio.Checks.Android/FFAudio.Checks.Android.csproj"
 PACKAGE="com.yanos.ffaudio.checks"
 ACTIVITY="$PACKAGE/.MainActivity"
 TRANSCRIPT="ffaudio-checks.log"
@@ -37,9 +45,17 @@ SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-$HOME/Library/Android/sdk}}"
 ADB="$SDK/platform-tools/adb"
 EMULATOR="$SDK/emulator/emulator"
 
+PACKAGE_VERSION="${FFAUDIO_PACKAGE_VERSION:-}"
+BUILD_ARGS=()
+
 # The .so has to exist before the build can package it, and a missing one is
-# otherwise an error several hundred lines into a build log.
-if [ ! -f "native/artifacts/android/arm64-v8a/libffaudio.so" ]; then
+# otherwise an error several hundred lines into a build log. In package mode
+# there is nothing to look for here - the .so files are inside a .nupkg that
+# restore has not unpacked yet.
+if [ -n "$PACKAGE_VERSION" ]; then
+  echo "==> Packages: FFAudio.NET + FFAudio.NET.Android $PACKAGE_VERSION"
+  BUILD_ARGS+=("-p:FFAudioPackageVersion=$PACKAGE_VERSION")
+elif [ ! -f "native/artifacts/android/arm64-v8a/libffaudio.so" ]; then
   echo "No façade at native/artifacts/android/arm64-v8a/libffaudio.so." >&2
   echo "Run native/android/build-ffmpeg.sh then native/android/build.sh first." >&2
   exit 1
@@ -92,16 +108,16 @@ fi
 
 echo "==> Building"
 BUILD_LOG=$(mktemp)
-if ! dotnet build "$PROJECT" -c Debug >"$BUILD_LOG" 2>&1; then
+if ! dotnet build "$PROJECT" -c Debug "${BUILD_ARGS[@]+"${BUILD_ARGS[@]}"}" >"$BUILD_LOG" 2>&1; then
   cat "$BUILD_LOG"
   rm -f "$BUILD_LOG"
   exit 1
 fi
 # The signed one, specifically: the build drops both next to each other and
 # the unsigned APK installs with INSTALL_PARSE_FAILED_NO_CERTIFICATES.
-APK=$(find checks/FFAudio.Checks.Android/bin/Debug -name "$PACKAGE-Signed.apk" | head -1)
+APK=$(find tests/checks/FFAudio.Checks.Android/bin/Debug -name "$PACKAGE-Signed.apk" | head -1)
 if [ -z "$APK" ]; then
-  APK=$(find checks/FFAudio.Checks.Android/bin/Debug -name "$PACKAGE.apk" | head -1)
+  APK=$(find tests/checks/FFAudio.Checks.Android/bin/Debug -name "$PACKAGE.apk" | head -1)
 fi
 rm -f "$BUILD_LOG"
 if [ -z "$APK" ]; then

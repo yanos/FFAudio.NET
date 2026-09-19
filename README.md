@@ -455,36 +455,46 @@ The same question — *does this platform turn a file into the right samples?* �
 asked on a phone rather than on a developer's Mac.
 
 ```
-dotnet run --project checks/FFAudio.Checks.Desktop          # here, as an app
+dotnet run --project tests/checks/FFAudio.Checks.Desktop          # here, as an app
 dotnet test --filter FullyQualifiedName~DeviceChecksTests   # here, under xUnit
-scripts/ios-device-checks.sh                                # iOS Simulator
-scripts/android-device-checks.sh                            # Android emulator
+tests/checks/FFAudio.Checks.iOS/run.sh                                # iOS Simulator
+tests/checks/FFAudio.Checks.Android/run.sh                            # Android emulator
 ```
 
-Thirty-four checks, the same thirty-four everywhere: every native-dependent
+Thirty-nine checks, the same thirty-nine everywhere: every native-dependent
 desktop test runs on the phone too. They cover PCM precision and all delivery
-formats, seeking and end-of-stream behaviour, path and stream inputs, invalid
-and failing inputs, tags and cover art, layouts and codec identity, and the
-FFmpeg license and configuration. That is the whole public surface — decode,
+formats, seeking and end-of-stream behaviour, path and stream inputs, format
+hints and their fallback, stream ownership, invalid and failing inputs and the
+error codes they carry, tags and cover art, layouts and codec identity,
+`IsAvailable`, and the FFmpeg license and configuration. That is the whole public surface — decode,
 metadata, identity — exercised end to end on every platform this library
 claims.
 
-The iOS run has a second mode, and it is the one that says whether the
-*package* works:
+Every runner has a second mode, and it is the one that says whether the
+*packages* work:
 
 ```
-FFAUDIO_PACKAGE_VERSION=0.1.0-alpha.0.9 scripts/ios-device-checks.sh
+FFAUDIO_PACKAGE_VERSION=0.1.0-alpha.0.9 tests/checks/FFAudio.Checks.iOS/run.sh
+FFAUDIO_PACKAGE_VERSION=0.1.0-alpha.0.9 tests/checks/FFAudio.Checks.Android/run.sh
+dotnet run --project tests/checks/FFAudio.Checks.Desktop -p:FFAudioPackageVersion=0.1.0-alpha.0.9
 ```
 
-Same thirty-four checks, same runner, but the binding comes from `FFAudio.NET`
-and the framework from `FFAudio.NET.iOS` instead of from this tree. That
-matters more here than anywhere else: on iOS the native does not arrive by
-runtime identifier, it arrives because the package ships a `.targets` file
-that declares a `<NativeReference>` in whatever project consumes it. Nothing
-in this repo compiles that file or runs it — it runs for the first time inside
-somebody else's build, and when it is wrong the symptom there is a link error
-or an app that dies at launch. CI runs this mode against the packages a run
-actually produced, and a tag cannot publish without it going green.
+Same thirty-nine checks, same runners, but the binding comes from `FFAudio.NET`
+and the native from this platform's payload package instead of from this tree.
+Point NuGet at the `.nupkg` files first, with a `nuget.config` or
+`dotnet nuget add source`, and make sure `native/artifacts/` is absent:
+`Native.Resolve` walks up to it before it asks the loader, so a leftover build
+would answer in the package's place.
+
+On a desktop the native arrives by runtime identifier, out of
+`runtimes/<rid>/native/`. On a phone it matters more: the native arrives
+because the package ships a `.targets` file that declares a
+`<NativeReference>` or an `<AndroidNativeLibrary>` in whatever project consumes
+it. Nothing in this repo compiles that file or runs it — it runs for the first
+time inside somebody else's build, and when it is wrong the symptom there is a
+link error or an app that dies at launch. CI runs this mode on all five
+platforms, as "Test package", against the packages a run actually produced,
+and a tag cannot publish without it going green.
 
 Three things this library depends on are green at link time and fatal at
 launch, and not one of them can fail on a desktop:
@@ -503,10 +513,10 @@ launch, and not one of them can fail on a desktop:
 - **`libffaudio.so` loading out of an APK**, for whichever ABI the hardware
   turns out to be.
 
-So `checks/FFAudio.Checks` carries no test framework — xUnit needs a host
+So `tests/checks/FFAudio.Checks` carries no test framework — xUnit needs a host
 process to discover and run it, and on iOS and Android what runs is an app. A
 check is a method that throws, the runner is a loop, and
-`checks/FFAudio.Checks.iOS` and `checks/FFAudio.Checks.Android` are the
+`tests/checks/FFAudio.Checks.iOS` and `tests/checks/FFAudio.Checks.Android` are the
 smallest apps that can call `RunAll` and write down what came back: no audio
 output, no network, and no UI beyond a text view. Every dependency they do not
 have is one that cannot explain a failure.
@@ -525,7 +535,7 @@ The checks also run on every desktop, twice. Once as `DeviceChecksTests`,
 because a check that is only ever exercised on a phone is one nobody can
 trust — a failure there would be ambiguous between the platform and the check
 itself, and running them here first means a red simulator run says something
-about the simulator. And once as `checks/FFAudio.Checks.Desktop`, a console
+about the simulator. And once as `tests/checks/FFAudio.Checks.Desktop`, a console
 app whose exit code is its tally, which is the third head rather than a second
 test: restore, native resolution and assembly loading all differ between an
 app and a test host, and *something an app does that a test does not* is the
@@ -567,8 +577,9 @@ git push origin v1.2.3
 two because `needs:` and artifacts only reach across jobs of the same run: a
 separate publish workflow firing on the same tag could not depend on the tests
 or download what they built, only repeat the work and hope the second answer
-matched the first. So the chain is `test` on three desktops → `pack` →
-`publish`, and the last of those is gated on the tag with
+matched the first. So the chain is `test` — one matrix across three desktops
+and both phones — → `pack` → `publish`, and the last of those is gated on the
+tag with
 `if: startsWith(github.ref, 'refs/tags/v')`.
 
 The publish job has no checkout and no build step. It downloads the package
@@ -646,8 +657,8 @@ run, so a commit can be tried before anyone decides to tag it, and packaging
 never breaks for the first time during a release.
 
 The phones are not only cross-compiled: CI boots an iOS Simulator and an
-Android emulator and runs the checks on them, the same way `scripts/` does on
-a developer's Mac. See **Device checks** for what that catches that a
+Android emulator and runs the checks on them, the same way each runner's
+`run.sh` does on a developer's Mac. See **Device checks** for what that catches that a
 cross-compile cannot.
 
 The expensive half of a mobile job is FFmpeg itself: `build-ffmpeg.sh`

@@ -31,7 +31,7 @@
        app - the heads beside it reference this - which is the shape
        buildTransitive exists for. -->
   <ItemGroup Condition="'$(FFAudioPackageVersion)' == ''">
-    <ProjectReference Include="../../src/FFAudio.NET/FFAudio.NET.csproj" />
+    <ProjectReference Include="../../../src/FFAudio.NET/FFAudio.NET.csproj" />
   </ItemGroup>
   <ItemGroup Condition="'$(FFAudioPackageVersion)' != ''">
     <PackageReference Include="FFAudio.NET" Version="$(FFAudioPackageVersion)" />

@@ -17,10 +17,10 @@
 #
 #   And the framework has to have embedded at all.
 #
-#   scripts/ios-device-checks.sh                 # first available simulator
-#   scripts/ios-device-checks.sh "iPhone 17 Pro" # by name
+#   tests/checks/FFAudio.Checks.iOS/run.sh                 # first available simulator
+#   tests/checks/FFAudio.Checks.iOS/run.sh "iPhone 17 Pro" # by name
 #
-# FFAUDIO_PACKAGE_VERSION=0.1.0-alpha.0.9 scripts/ios-device-checks.sh
+# FFAUDIO_PACKAGE_VERSION=0.1.0-alpha.0.9 tests/checks/FFAudio.Checks.iOS/run.sh
 #
 # runs the same checks against the packages instead of the tree: the binding
 # comes from FFAudio.NET and the framework from FFAudio.NET.iOS, injected by
@@ -41,11 +41,11 @@
 # install a signed build; the app shows the same lines on screen, so a run
 # with no cable attached is still readable.
 set -euo pipefail
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/../../.."
 
-PROJECT="checks/FFAudio.Checks.iOS/FFAudio.Checks.iOS.csproj"
+PROJECT="tests/checks/FFAudio.Checks.iOS/FFAudio.Checks.iOS.csproj"
 BUNDLE_ID="com.yanos.ffaudio.checks"
-APP="checks/FFAudio.Checks.iOS/bin/Debug/net10.0-ios/iossimulator-arm64/FFAudio.Checks.iOS.app"
+APP="tests/checks/FFAudio.Checks.iOS/bin/Debug/net10.0-ios/iossimulator-arm64/FFAudio.Checks.iOS.app"
 TRANSCRIPT="ffaudio-checks.log"
 TIMEOUT_SECONDS=180
 DEVICE="${1:-}"
@@ -83,8 +83,8 @@ xcrun simctl bootstatus "$DEVICE" -b >/dev/null
 # AOT crash ("Managed Stacktrace: at <unknown> <0xffffffff>") that a clean
 # rebuild always fixes, and that crash reads exactly like a failing check.
 echo "==> Cleaning"
-rm -rf checks/FFAudio.Checks.iOS/obj checks/FFAudio.Checks.iOS/bin \
-       checks/FFAudio.Checks/obj checks/FFAudio.Checks/bin \
+rm -rf tests/checks/FFAudio.Checks.iOS/obj tests/checks/FFAudio.Checks.iOS/bin \
+       tests/checks/FFAudio.Checks/obj tests/checks/FFAudio.Checks/bin \
        src/FFAudio.NET/obj src/FFAudio.NET/bin
 
 echo "==> Building"

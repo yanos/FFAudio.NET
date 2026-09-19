@@ -3,7 +3,7 @@
   <!-- A check runner, not an app. It launches, runs FFAudio.Checks against
        the real iOS runtime, prints one line per check and a final tally, and
        leaves the same text on screen so a run on a physical device is
-       readable without a cable. scripts/ios-device-checks.sh drives it on a
+       readable without a cable. tests/checks/FFAudio.Checks.iOS/run.sh drives it on a
        simulator and turns the tally into an exit code.
 
        No UI framework beyond a UITextView and nothing that plays audio: what
@@ -58,12 +58,12 @@
   </ItemGroup>
 
   <ItemGroup Condition="'$(FFAudioPackageVersion)' == '' And $(RuntimeIdentifier.StartsWith('iossimulator'))">
-    <NativeReference Include="..\..\native\artifacts\ios\ios-simulator\ffaudio.framework">
+    <NativeReference Include="..\..\..\native\artifacts\ios\ios-simulator\ffaudio.framework">
       <Kind>Framework</Kind>
     </NativeReference>
   </ItemGroup>
   <ItemGroup Condition="'$(FFAudioPackageVersion)' == '' And !$(RuntimeIdentifier.StartsWith('iossimulator'))">
-    <NativeReference Include="..\..\native\artifacts\ios\ios-device\ffaudio.framework">
+    <NativeReference Include="..\..\..\native\artifacts\ios\ios-device\ffaudio.framework">
       <Kind>Framework</Kind>
     </NativeReference>
   </ItemGroup>

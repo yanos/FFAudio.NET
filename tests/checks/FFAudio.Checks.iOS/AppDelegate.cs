@@ -17,7 +17,7 @@ public class AppDelegate : UIApplicationDelegate
     // one that works somewhere:
     //
     //  - a file in the app's Documents directory, which is what
-    //    scripts/ios-device-checks.sh reads. Console.WriteLine from a .NET
+    //    tests/checks/FFAudio.Checks.iOS/run.sh reads. Console.WriteLine from a .NET
     //    iOS app does not reliably reach `simctl launch --console-pty`, and a
     //    run that decodes correctly but reports nothing is indistinguishable
     //    from a hang. A file in a container the script can find its way into

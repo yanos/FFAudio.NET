@@ -25,4 +25,20 @@
     <ProjectReference Include="../FFAudio.Checks/FFAudio.Checks.csproj" />
   </ItemGroup>
 
+  <!-- With $(FFAudioPackageVersion) set, the native comes from this desktop's
+       payload package instead of the tree, the way it reaches a consumer: the
+       package puts it under runtimes/<rid>/native/, the host copies it out,
+       and Native.Resolve finds it by name. Only this machine's package,
+       because the other two carry nothing this machine could load, and
+       restoring a package this run cannot exercise proves nothing about it. -->
+  <ItemGroup Condition="'$(FFAudioPackageVersion)' != '' And $([MSBuild]::IsOSPlatform('Linux'))">
+    <PackageReference Include="FFAudio.NET.Linux" Version="$(FFAudioPackageVersion)" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(FFAudioPackageVersion)' != '' And $([MSBuild]::IsOSPlatform('OSX'))">
+    <PackageReference Include="FFAudio.NET.macOS" Version="$(FFAudioPackageVersion)" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(FFAudioPackageVersion)' != '' And $([MSBuild]::IsOSPlatform('Windows'))">
+    <PackageReference Include="FFAudio.NET.Windows" Version="$(FFAudioPackageVersion)" />
+  </ItemGroup>
+
 </Project>

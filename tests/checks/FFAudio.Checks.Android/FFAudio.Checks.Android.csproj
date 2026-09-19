@@ -8,7 +8,7 @@
        It launches, runs FFAudio.Checks against the real Android runtime,
        writes one line per check and a final tally, and leaves the same text
        on screen so a run on a physical phone is readable without a cable.
-       scripts/android-device-checks.sh drives it on an emulator and turns the
+       tests/checks/FFAudio.Checks.Android/run.sh drives it on an emulator and turns the
        tally into an exit code. -->
 
   <PropertyGroup>
@@ -44,15 +44,25 @@
        All three ABIs, because which one is exercised is a property of the
        hardware rather than a choice: an emulator on Apple silicon is
        arm64-v8a, one on a CI runner is x86_64, and armeabi-v7a is what an
-       older phone would load. Built by native/android/build.sh. -->
-  <ItemGroup>
-    <AndroidNativeLibrary Include="..\..\native\artifacts\android\arm64-v8a\libffaudio.so">
+       older phone would load. Built by native/android/build.sh.
+
+       With $(FFAudioPackageVersion) set, none of this is declared and
+       FFAudio.NET.Android brings the same three instead, through its own
+       buildTransitive .targets - the iOS runner's arrangement, for the same
+       reason: declaring both would put two libffaudio.so files in one APK,
+       and whichever won would be an accident. -->
+  <ItemGroup Condition="'$(FFAudioPackageVersion)' != ''">
+    <PackageReference Include="FFAudio.NET.Android" Version="$(FFAudioPackageVersion)" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(FFAudioPackageVersion)' == ''">
+    <AndroidNativeLibrary Include="..\..\..\native\artifacts\android\arm64-v8a\libffaudio.so">
       <Abi>arm64-v8a</Abi>
     </AndroidNativeLibrary>
-    <AndroidNativeLibrary Include="..\..\native\artifacts\android\x86_64\libffaudio.so">
+    <AndroidNativeLibrary Include="..\..\..\native\artifacts\android\x86_64\libffaudio.so">
       <Abi>x86_64</Abi>
     </AndroidNativeLibrary>
-    <AndroidNativeLibrary Include="..\..\native\artifacts\android\armeabi-v7a\libffaudio.so">
+    <AndroidNativeLibrary Include="..\..\..\native\artifacts\android\armeabi-v7a\libffaudio.so">
       <Abi>armeabi-v7a</Abi>
     </AndroidNativeLibrary>
   </ItemGroup>

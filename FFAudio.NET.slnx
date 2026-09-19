@@ -12,8 +12,8 @@
     <Project Path="packaging/FFAudio.NET.iOS/FFAudio.NET.iOS.csproj" />
     <Project Path="packaging/FFAudio.NET.Android/FFAudio.NET.Android.csproj" />
   </Folder>
-  <Folder Name="/checks/">
-    <Project Path="checks/FFAudio.Checks/FFAudio.Checks.csproj" />
-    <Project Path="checks/FFAudio.Checks.Desktop/FFAudio.Checks.Desktop.csproj" />
+  <Folder Name="/tests/checks/">
+    <Project Path="tests/checks/FFAudio.Checks/FFAudio.Checks.csproj" />
+    <Project Path="tests/checks/FFAudio.Checks.Desktop/FFAudio.Checks.Desktop.csproj" />
   </Folder>
 </Solution>

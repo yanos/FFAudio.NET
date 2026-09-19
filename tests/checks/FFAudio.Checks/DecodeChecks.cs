@@ -2,6 +2,9 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
+
+using Microsoft.Extensions.Logging;
 
 namespace FFAudio.Checks;
 
@@ -52,6 +55,7 @@ public static class DecodeChecks
             // mobile heads cannot run xUnit, but they must exercise every
             // behaviour a desktop build does rather than a smaller proxy.
             results.Add(Run("the native library matches the expected ABI", () => NativeLibraryMatchesAbi(path)));
+            results.Add(Run("the decoder says it is available", DecoderIsAvailable));
             results.Add(Run("a 24-bit source arrives with every bit", () => EveryBitSurvives(path)));
             results.Add(Run("a 24-bit source delivered as 16-bit loses low bits", () => S16LosesLowBits(path)));
             results.Add(Run("a 24-bit source delivered as 32-bit has an empty low byte", () => S32HasEmptyLowByte(path)));
@@ -72,6 +76,10 @@ public static class DecodeChecks
             results.Add(Run("a non-audio file fails to open", () => NonAudioFailsToOpen(directory)));
             results.Add(Run("a missing file fails with its reason", () => MissingFileFailsWithReason(directory)));
             results.Add(Run("a stream failure faults instead of ending quietly", () => FailingStreamFaults(path)));
+            results.Add(Run("a right format hint opens the stream as named", () => RightHintOpens(path)));
+            results.Add(Run("a wrong format hint falls back to probing and says so", () => WrongHintFallsBack(path)));
+            results.Add(Run("a stream the decoder owns is closed with it", () => OwnedStreamIsClosed(path)));
+            results.Add(Run("a failed open closes a stream the decoder owns", () => FailedOpenClosesOwnedStream(directory)));
 
             var tagged = SyntheticTaggedAiff.CreateFile(directory, "tagged.aiff", 44100, 4410);
 
@@ -137,6 +145,16 @@ public static class DecodeChecks
     {
         using var decoder = Decoder.OpenPath(path, SampleFormat.S16);
         return $"ABI {decoder.Format.SampleFormat}";
+    }
+
+    // The question a caller asks before offering playback at all, and the one
+    // place a missing or mismatched native is meant to be a false rather than
+    // an exception. On a platform where everything else here passes it has to
+    // say true - a false here would have an app hide a player that works.
+    private static string DecoderIsAvailable()
+    {
+        Expect(Decoder.IsAvailable, "Decoder.IsAvailable is false with a working native present");
+        return "available";
     }
 
     private static string S16LosesLowBits(string path)
@@ -387,9 +405,13 @@ public static class DecodeChecks
         {
             using var decoder = Decoder.OpenPath(path, SampleFormat.S16);
         }
-        catch (DecodeException)
+        catch (DecodeException exception)
         {
-            return "DecodeException";
+            // FFmpeg's own AVERROR, negative, rather than a code this library
+            // made up: a caller who wants to branch on why an open failed
+            // compares against the same numbers FFmpeg documents.
+            Expect(exception.Code < 0, $"error code was {exception.Code}, wanted an AVERROR");
+            return $"DecodeException {exception.Code}";
         }
 
         throw new CheckFailedException("a non-audio file opened successfully");
@@ -405,7 +427,8 @@ public static class DecodeChecks
         {
             Expect(exception.Message.Contains("No such file", StringComparison.OrdinalIgnoreCase),
                 $"missing-file error was {Quote(exception.Message)}");
-            return exception.Message;
+            Expect(exception.Code < 0, $"error code was {exception.Code}, wanted an AVERROR");
+            return $"{exception.Code}: {exception.Message}";
         }
 
         throw new CheckFailedException("a missing file opened successfully");
@@ -447,6 +470,88 @@ public static class DecodeChecks
         }
 
         throw new CheckFailedException("a failing stream ended without DecodeException");
+    }
+
+    // A named demuxer, used rather than probed for. The hint's value is a
+    // stream that starts somewhere a probe would misjudge; the check is only
+    // that naming the right one changes nothing about what comes out.
+    private static string RightHintOpens(string path)
+    {
+        byte[] expected;
+        using (var fromPath = Decoder.OpenPath(path, SampleFormat.S24))
+            expected = DecodeAll(fromPath);
+
+        var logger = new RecordingLogger();
+        using var source = new MemoryStream(File.ReadAllBytes(path));
+        using var decoder = Decoder.OpenStream(source, SampleFormat.S24, formatHint: "wav", logger: logger);
+
+        Expect(decoder.Format.Container == "wav", $"container {Quote(decoder.Format.Container)}");
+        Expect(logger.Entries.Count == 0, $"{logger.Entries.Count} log entries for a hint that was right");
+        var pcm = DecodeAll(decoder);
+        Expect(pcm.AsSpan().SequenceEqual(expected), "the hinted stream decoded differently from the path");
+        return $"{pcm.Length} bytes, identical";
+    }
+
+    // A catalog that says FLAC about a WAV. The forced open fails, the stream
+    // is rewound and probed, and the track plays - but the mislabel is still a
+    // fact about the caller's data, and the warning is the only place it
+    // surfaces. Both halves are the contract: it opens, and it says so.
+    private static string WrongHintFallsBack(string path)
+    {
+        byte[] expected;
+        using (var fromPath = Decoder.OpenPath(path, SampleFormat.S24))
+            expected = DecodeAll(fromPath);
+
+        var logger = new RecordingLogger();
+        using var source = new MemoryStream(File.ReadAllBytes(path));
+        using var decoder = Decoder.OpenStream(source, SampleFormat.S24, formatHint: "flac", logger: logger);
+
+        Expect(decoder.Format.Container == "wav", $"container {Quote(decoder.Format.Container)}");
+        var warnings = logger.Entries.Where(entry => entry.Level == LogLevel.Warning).ToList();
+        Expect(warnings.Count == 1, $"{warnings.Count} warnings, wanted one");
+        Expect(warnings[0].Message.Contains("flac", StringComparison.Ordinal),
+            $"the warning does not name the hint: {Quote(warnings[0].Message)}");
+        var pcm = DecodeAll(decoder);
+        Expect(pcm.AsSpan().SequenceEqual(expected), "the fallback decoded differently from the path");
+        return warnings[0].Message;
+    }
+
+    // ownsStream is who closes the Stream, and both answers are promises: a
+    // decoder that owns it closes it on Dispose, one that does not leaves it
+    // open for a caller that still wants it - to retry, to rewind, to hand to
+    // the next track.
+    private static string OwnedStreamIsClosed(string path)
+    {
+        var bytes = File.ReadAllBytes(path);
+
+        var owned = new MemoryStream(bytes);
+        Decoder.OpenStream(owned, SampleFormat.S16, ownsStream: true).Dispose();
+        Expect(!owned.CanRead, "an owned stream was still open after Dispose");
+
+        using var borrowed = new MemoryStream(bytes);
+        Decoder.OpenStream(borrowed, SampleFormat.S16).Dispose();
+        Expect(borrowed.CanRead, "a borrowed stream was closed by Dispose");
+
+        return "owned closed, borrowed open";
+    }
+
+    // The half of ownership nobody tests: an open that throws never returns a
+    // decoder to Dispose, so if it does not close an owned stream itself,
+    // nothing ever will.
+    private static string FailedOpenClosesOwnedStream(string directory)
+    {
+        var owned = new MemoryStream(System.Text.Encoding.ASCII.GetBytes("this is not audio, whatever it claims"));
+        try
+        {
+            using var decoder = Decoder.OpenStream(owned, SampleFormat.S16, ownsStream: true);
+        }
+        catch (DecodeException exception)
+        {
+            Expect(!owned.CanRead, "an owned stream was left open after a failed open");
+            return $"DecodeException {exception.Code}, stream closed";
+        }
+
+        throw new CheckFailedException("a non-audio stream opened successfully");
     }
 
     // Tags are read off the format context rather than the packet stream, so

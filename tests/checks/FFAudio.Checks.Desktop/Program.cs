@@ -14,7 +14,7 @@ namespace FFAudio.Checks.Desktop;
 // reliable stdout - this one has a console and an exit code, so it needs
 // neither.
 //
-//     dotnet run --project checks/FFAudio.Checks.Desktop
+//     dotnet run --project tests/checks/FFAudio.Checks.Desktop
 //
 // A native has to exist for it to find: native/artifacts/<platform>/, which
 // is where native/build-all.sh puts one, or FFAUDIO_LIBRARY pointing at one.

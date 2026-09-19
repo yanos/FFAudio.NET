@@ -1,9 +1,11 @@
 using System;
 using System.IO;
 using System.Collections.Generic;
+using System.Linq;
 
 using FFAudio.Checks;
 
+using Microsoft.Extensions.Logging;
 
 using Xunit;
 
@@ -306,7 +308,10 @@ public class DecoderTests : IDisposable
         var path = Path.Combine(_directory, "not-audio.wav");
         File.WriteAllText(path, "this is not a wav file, whatever its name says");
 
-        Assert.Throws<DecodeException>(() => Decoder.OpenPath(path, SampleFormat.S16));
+        var exception = Assert.Throws<DecodeException>(() => Decoder.OpenPath(path, SampleFormat.S16));
+
+        // FFmpeg's own AVERROR, so a caller branches on documented numbers.
+        Assert.True(exception.Code < 0, $"error code was {exception.Code}");
     }
 
     [Fact]
@@ -318,6 +323,7 @@ public class DecoderTests : IDisposable
         // FFmpeg's own diagnosis, not a flattened "could not open" - the
         // reason ffaudio_error_string passes AVERROR codes through untouched.
         Assert.Contains("No such file", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.True(exception.Code < 0, $"error code was {exception.Code}");
     }
 
     // A stream that dies mid-track must fault, not spin and not end quietly.
@@ -351,6 +357,71 @@ public class DecoderTests : IDisposable
         Assert.InRange(produced, 1, Frames * 6 - 1);
         Assert.InRange(source.Reads, 1, 200);
     }
+
+    [Fact]
+    public void A_right_format_hint_opens_the_stream_as_named()
+    {
+        var path = HiResFixture();
+        using var fromPath = Decoder.OpenPath(path, SampleFormat.S24);
+        var expected = DecodeAll(fromPath);
+
+        var logger = new RecordingLogger();
+        using var source = new MemoryStream(File.ReadAllBytes(path));
+        using var decoder = Decoder.OpenStream(source, SampleFormat.S24, formatHint: "wav", logger: logger);
+
+        Assert.Equal("wav", decoder.Format.Container);
+        Assert.Empty(logger.Entries);
+        Assert.Equal(expected, DecodeAll(decoder));
+    }
+
+    // A catalog that says FLAC about a WAV: the forced open fails, the stream
+    // is rewound and probed, and the track plays - and the mislabel is logged,
+    // because that warning is the only place it ever surfaces.
+    [Fact]
+    public void A_wrong_format_hint_falls_back_to_probing_and_says_so()
+    {
+        var path = HiResFixture();
+        using var fromPath = Decoder.OpenPath(path, SampleFormat.S24);
+        var expected = DecodeAll(fromPath);
+
+        var logger = new RecordingLogger();
+        using var source = new MemoryStream(File.ReadAllBytes(path));
+        using var decoder = Decoder.OpenStream(source, SampleFormat.S24, formatHint: "flac", logger: logger);
+
+        Assert.Equal("wav", decoder.Format.Container);
+        var warning = Assert.Single(logger.Entries, entry => entry.Level == LogLevel.Warning);
+        Assert.Contains("flac", warning.Message);
+        Assert.Equal(expected, DecodeAll(decoder));
+    }
+
+    [Fact]
+    public void A_stream_the_decoder_owns_is_closed_with_it_and_a_borrowed_one_is_not()
+    {
+        var bytes = File.ReadAllBytes(HiResFixture());
+
+        var owned = new MemoryStream(bytes);
+        Decoder.OpenStream(owned, SampleFormat.S16, ownsStream: true).Dispose();
+        Assert.False(owned.CanRead);
+
+        using var borrowed = new MemoryStream(bytes);
+        Decoder.OpenStream(borrowed, SampleFormat.S16).Dispose();
+        Assert.True(borrowed.CanRead);
+    }
+
+    // An open that throws never returns a decoder to Dispose, so an owned
+    // stream it does not close itself is never closed at all.
+    [Fact]
+    public void A_failed_open_closes_a_stream_the_decoder_owns()
+    {
+        var owned = new MemoryStream("this is not audio, whatever it claims"u8.ToArray());
+
+        Assert.Throws<DecodeException>(() => Decoder.OpenStream(owned, SampleFormat.S16, ownsStream: true));
+        Assert.False(owned.CanRead);
+    }
+
+    [Fact]
+    public void The_decoder_says_it_is_available() =>
+        Assert.True(Decoder.IsAvailable);
 
     [Fact]
     public void The_native_library_matches_the_abi_this_build_expects() =>

@@ -29,7 +29,8 @@ permissions:
   contents: read
 
 jobs:
-  # Build the façade and run the suite against it, once per desktop platform.
+  # Build the façade and run the suite against it, once per platform - three
+  # desktops, an iOS Simulator and an Android emulator, in one matrix.
   #
   # There is no "fast suite" to run without a native here, and that is on
   # purpose: every test in DecoderTests is tagged RequiresNative, because a
@@ -37,16 +38,51 @@ jobs:
   # opinions. So the native build is not an optional step that a filter can
   # route around - if it fails, the job fails, which is the point.
   #
-  # Three platforms rather than one because the native is a different artifact
+  # Five platforms rather than one because the native is a different artifact
   # on each: pkg-config against a distro FFmpeg on Linux, against Homebrew's
-  # on macOS, and a pinned LGPL download linked with MSVC on Windows. Those
-  # are three ways for the same C to stop compiling.
+  # on macOS, a pinned LGPL download linked with MSVC on Windows, and FFmpeg
+  # cross-compiled from source for each phone. Those are five ways for the same
+  # C to stop compiling.
+  #
+  # One matrix rather than a job per family, so a platform is a row and not a
+  # copy of a job. Steps pick their platform off matrix.platform rather than
+  # runner.os, because two rows share a runner image: iOS runs on macOS, and
+  # Android on Linux. matrix.mobile marks the two whose checks run inside an
+  # app on a simulator instead of under dotnet test. Each row names the
+  # artifact it uploads, so what `pack` downloads is unchanged.
   test:
-    name: Build and test (${{ matrix.os }})
+    name: Build and test (${{ matrix.name }})
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        include:
+          - name: Linux
+            os: ubuntu-latest
+            platform: linux
+            artifact: ffaudio-Linux
+            artifact-path: native/artifacts/
+          - name: macOS
+            os: macos-latest
+            platform: macos
+            artifact: ffaudio-macOS
+            artifact-path: native/artifacts/
+          - name: Windows
+            os: windows-latest
+            platform: windows
+            artifact: ffaudio-Windows
+            artifact-path: native/artifacts/
+          - name: iOS Simulator
+            os: macos-latest
+            platform: ios
+            mobile: true
+            artifact: ffaudio-iOS
+            artifact-path: native/artifacts/ios/
+          - name: Android emulator
+            os: ubuntu-latest
+            platform: android
+            mobile: true
+            artifact: ffaudio-Android
+            artifact-path: native/artifacts/android/
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -65,18 +101,20 @@ jobs:
             src/FFAudio.NET/FFAudio.NET.csproj
             tests/FFAudio.Tests/FFAudio.Tests.csproj
 
+      # --- The desktops ---------------------------------------------------
+
       # A distro FFmpeg is GPL-enabled, which makes it a development build
       # only - fine for deciding whether the façade decodes, not for anything
       # shipped. See NOTICE.
       - name: Build ffaudio (Linux)
-        if: runner.os == 'Linux'
+        if: matrix.platform == 'linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y libavformat-dev libavcodec-dev libavutil-dev libswresample-dev
           native/linux/build.sh
 
       - name: Build ffaudio (macOS)
-        if: runner.os == 'macOS'
+        if: matrix.platform == 'macos'
         run: |
           brew install ffmpeg
           native/macos/build.sh
@@ -86,7 +124,7 @@ jobs:
       # which is why this is seconds where the mobile equivalents are tens of
       # minutes.
       - name: Build ffaudio (Windows)
-        if: runner.os == 'Windows'
+        if: matrix.platform == 'windows'
         run: ./native/windows/build.ps1
         shell: pwsh
 
@@ -102,6 +140,7 @@ jobs:
       # renamed release would otherwise be discovered by a lawyer rather than
       # by a build. See FFmpegBuildTests.
       - name: Run tests
+        if: ${{ !matrix.mobile }}
         run: dotnet test FFAudio.NET.slnx --configuration Release
         env:
           FFAUDIO_REQUIRE_LGPL: ${{ runner.os == 'Windows' && '1' || '' }}
@@ -116,7 +155,8 @@ jobs:
       #
       # Its exit code is its tally, so nothing here has to parse the output.
       - name: Run the checks as an app
-        run: dotnet run --project checks/FFAudio.Checks.Desktop --configuration Release
+        if: ${{ !matrix.mobile }}
+        run: dotnet run --project tests/checks/FFAudio.Checks.Desktop --configuration Release
 
       # Everything above builds against the FFmpeg this runner happens to have,
       # which is the right thing to test and the wrong thing to ship. A dylib
@@ -140,7 +180,7 @@ jobs:
       # replaceable. A static MSVC FFmpeg would be a worse answer to a question
       # Windows does not have.
       - name: Cache the static FFmpeg
-        if: runner.os != 'Windows'
+        if: matrix.platform == 'linux' || matrix.platform == 'macos'
         uses: actions/cache@v4
         with:
           path: |
@@ -152,15 +192,15 @@ jobs:
       # to guess one. The macOS runner is arm64, where the toolchain's own
       # assembler is enough.
       - name: Install nasm (Linux)
-        if: runner.os == 'Linux'
+        if: matrix.platform == 'linux'
         run: sudo apt-get install -y nasm
 
       - name: Build the shipping native (Linux)
-        if: runner.os == 'Linux'
+        if: matrix.platform == 'linux'
         run: FFAUDIO_STATIC=1 native/linux/build.sh
 
       - name: Build the shipping native (macOS)
-        if: runner.os == 'macOS'
+        if: matrix.platform == 'macos'
         run: FFAUDIO_STATIC=1 native/macos/build.sh
 
       # The same checks, against the binary that is about to be packed - and
@@ -170,114 +210,69 @@ jobs:
       # asking the binary rather than the build is the whole point of
       # FFmpegBuild - a configure line does not travel inside a NuGet.
       - name: Run the checks against the shipping native
-        if: runner.os != 'Windows'
-        run: dotnet run --project checks/FFAudio.Checks.Desktop --configuration Release
+        if: matrix.platform == 'linux' || matrix.platform == 'macos'
+        run: dotnet run --project tests/checks/FFAudio.Checks.Desktop --configuration Release
         env:
           FFAUDIO_REQUIRE_LGPL: 1
 
-      # The façade this job just proved decodes, downloadable from the run.
+      # --- The phones -----------------------------------------------------
       #
-      # Nothing downstream consumes these yet: the package carries the
-      # binding and no decoder, so a consumer still supplies their own
-      # libffaudio (FFAUDIO_LIBRARY, or beside their binary - see the README).
-      # Wiring them into a runtimes/<rid>/native/ payload is Phase 6, and this
-      # is the half of it that has to exist first - a built native from each
-      # platform, in one place, at one commit.
+      # A cross-compile alone would not be worth much here. Three things this
+      # library depends on are green at link time and fatal at launch, and
+      # none of them can fail on a desktop: Native.Resolve's iOS branch
+      # loading the façade by hand out of Frameworks/ffaudio.framework, the
+      # UnmanagedCallersOnly read and seek trampolines OpenStream hands to
+      # FFmpeg being AOT-compiled rather than JITted, and libffaudio.so
+      # loading out of an APK for whichever ABI the hardware is. So these rows
+      # build the native, build a runner app around it, launch it, and read
+      # back the tally it wrote - which is what each runner's run.sh does,
+      # unchanged from how it runs on a developer's Mac.
       #
-      # Names must differ per job: upload-artifact v4 refuses a second upload
-      # under a name that already exists in the run, where v3 merged them.
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ffaudio-${{ runner.os }}
-          path: native/artifacts/
-          if-no-files-found: error
-
-  # The phones run the checks, on a simulator and an emulator.
-  #
-  # A cross-compile alone would not be worth much here. Three things this
-  # library depends on are green at link time and fatal at launch, and none of
-  # them can fail on a desktop: Native.Resolve's iOS branch loading the façade
-  # by hand out of Frameworks/ffaudio.framework, the UnmanagedCallersOnly read
-  # and seek trampolines OpenStream hands to FFmpeg being AOT-compiled rather
-  # than JITted, and libffaudio.so loading out of an APK for whichever ABI the
-  # hardware is. So these jobs build the native, build a runner app around it,
-  # launch it, and read back the tally it wrote - which is what the two
-  # scripts in scripts/ do, unchanged from how they run on a developer's Mac.
-  #
-  # The expensive half is FFmpeg itself: build-ffmpeg.sh cross-compiles it
-  # from source, which is tens of minutes across two iOS slices or three
-  # Android ABIs. Both scripts are idempotent - a prefix with a libavformat.a
-  # in it is left alone - so caching the prefix makes every run after the
-  # first just the façade, which is one translation unit. The key is the
-  # script's own hash, because the FFmpeg version and the decoder list are
-  # both in it: change either and the cache misses, which is exactly right.
-  ios:
-    name: Build and test (iOS Simulator)
-    runs-on: macos-latest
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: 10.0.x
-
-      - name: Install the iOS workload
-        run: dotnet workload install ios
+      # The expensive half is FFmpeg itself: build-ffmpeg.sh cross-compiles
+      # it from source, which is tens of minutes across two iOS slices or
+      # three Android ABIs. Both scripts are idempotent - a prefix with a
+      # libavformat.a in it is left alone - so caching the prefix makes every
+      # run after the first just the façade, which is one translation unit.
+      # The key is the script's own hash, because the FFmpeg version and the
+      # decoder list are both in it: change either and the cache misses,
+      # which is exactly right.
+      - name: Install the mobile workload
+        if: matrix.mobile
+        run: dotnet workload install ${{ matrix.platform }}
 
       - name: Cache the cross-compiled FFmpeg
+        if: matrix.mobile
         uses: actions/cache@v4
         with:
-          path: native/ios/ffmpeg/prefix
-          key: ffmpeg-ios-${{ hashFiles('native/ios/build-ffmpeg.sh') }}
+          path: native/${{ matrix.platform }}/ffmpeg/prefix
+          key: ffmpeg-${{ matrix.platform }}-${{ hashFiles(format('native/{0}/build-ffmpeg.sh', matrix.platform)) }}
 
-      - name: Build FFmpeg
+      - name: Build FFmpeg (iOS)
+        if: matrix.platform == 'ios'
         run: native/ios/build-ffmpeg.sh
 
-      - name: Build ffaudio
+      - name: Build ffaudio (iOS)
+        if: matrix.platform == 'ios'
         run: native/ios/build.sh
 
       # Builds the runner, installs it on a simulator, launches it and turns
       # the tally into an exit code. The transcript is printed either way -
       # a run that produced no tally prints what there was instead, because
       # "the app wrote nothing" and "six checks failed" are different findings.
-      - name: Run the checks
-        run: scripts/ios-device-checks.sh
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ffaudio-iOS
-          path: native/artifacts/ios/
-          if-no-files-found: error
-
-  android:
-    name: Build and test (Android emulator)
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: 10.0.x
-
-      - name: Install the Android workload
-        run: dotnet workload install android
-
-      - name: Cache the cross-compiled FFmpeg
-        uses: actions/cache@v4
-        with:
-          path: native/android/ffmpeg/prefix
-          key: ffmpeg-android-${{ hashFiles('native/android/build-ffmpeg.sh') }}
+      - name: Run the checks (iOS)
+        if: matrix.platform == 'ios'
+        run: tests/checks/FFAudio.Checks.iOS/run.sh
 
       # The runner image ships an NDK already; the scripts want it under the
       # name the NDK's own docs use, which is what a developer machine sets.
-      - name: Build FFmpeg
+      - name: Build FFmpeg (Android)
+        if: matrix.platform == 'android'
         run: |
           export ANDROID_NDK_HOME="$ANDROID_NDK_LATEST_HOME"
           native/android/build-ffmpeg.sh
 
-      - name: Build ffaudio
+      - name: Build ffaudio (Android)
+        if: matrix.platform == 'android'
         run: |
           export ANDROID_NDK_HOME="$ANDROID_NDK_LATEST_HOME"
           native/android/build.sh
@@ -287,6 +282,7 @@ jobs:
       # this the emulator falls back to software rendering of the whole CPU
       # and times out rather than failing.
       - name: Let the emulator use KVM
+        if: matrix.platform == 'android'
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
             | sudo tee /etc/udev/rules.d/99-kvm4all.rules
@@ -299,19 +295,33 @@ jobs:
       # x86_64 here where a developer's Mac is arm64-v8a, which is the point
       # of packaging all three ABIs: which one gets exercised is a property of
       # the hardware, so between the two places these run, two of them do.
-      - name: Run the checks
+      - name: Run the checks (Android)
+        if: matrix.platform == 'android'
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 30
           arch: x86_64
           target: default
           emulator-options: -no-window -no-audio -no-boot-anim -no-snapshot-load -gpu swiftshader_indirect
-          script: FFAUDIO_ANDROID_SERIAL=emulator-5554 scripts/android-device-checks.sh
+          script: FFAUDIO_ANDROID_SERIAL=emulator-5554 tests/checks/FFAudio.Checks.Android/run.sh
 
+      # The façade this job just proved decodes, downloadable from the run.
+      #
+      # Nothing downstream consumes these yet: the package carries the
+      # binding and no decoder, so a consumer still supplies their own
+      # libffaudio (FFAUDIO_LIBRARY, or beside their binary - see the README).
+      # Wiring them into a runtimes/<rid>/native/ payload is Phase 6, and this
+      # is the half of it that has to exist first - a built native from each
+      # platform, in one place, at one commit.
+      #
+      # Names must differ per row: upload-artifact v4 refuses a second upload
+      # under a name that already exists in the run, where v3 merged them.
+      # The phones upload the contents of their own folder rather than the
+      # whole of native/artifacts/, which is the shape `pack` lays out.
       - uses: actions/upload-artifact@v4
         with:
-          name: ffaudio-Android
-          path: native/artifacts/android/
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact-path }}
           if-no-files-found: error
 
   # Packing on every push, not only on a tag. A release that discovers its own
@@ -320,12 +330,12 @@ jobs:
   # a real pre-release, not a placeholder. The artifact is downloadable from
   # the run, so a consumer can try a commit before it is tagged.
   #
-  # `needs` gates it on all five platforms, so a commit that stopped compiling
-  # on Windows - or stopped cross-compiling for a phone - never produces a
-  # package at all.
+  # `needs` gates it on every row of the test matrix, so a commit that stopped
+  # compiling on Windows - or stopped cross-compiling for a phone - never
+  # produces a package at all.
   pack:
     name: Pack
-    needs: [test, ios, android]
+    needs: test
     runs-on: ubuntu-latest
 
     outputs:
@@ -420,33 +430,63 @@ jobs:
           path: artifacts/nupkg/*
           if-no-files-found: error
 
-  # The package, used the way a consumer uses it, on an iOS Simulator.
+  # The packages, used the way a consumer uses them, on every platform.
   #
   # Everything above this proves the source works. Nothing above it proves the
-  # package does, and on iOS those are further apart than anywhere else: the
-  # framework does not arrive by RID, it arrives because FFAudio.NET.iOS ships
-  # a .targets file that declares a <NativeReference> in the consuming project,
-  # picking a slice off the RuntimeIdentifier. That file is not compiled, not
-  # tested and not run by anything in this repo - it runs for the first time
-  # inside somebody else's build, and if it is wrong the symptom there is a
-  # link error or an app that dies at launch.
+  # packages do, and the two are further apart than they look. A desktop
+  # native arrives by RID, out of runtimes/<rid>/native/ in a payload package,
+  # and is found by name rather than by the walk up to native/artifacts/ the
+  # tree's own runs use. A phone's arrives because FFAudio.NET.iOS or
+  # FFAudio.NET.Android ships a .targets file that declares it in the
+  # consuming project - a file that is not compiled, not tested and not run by
+  # anything else in this repo. It runs for the first time inside somebody
+  # else's build, and if it is wrong the symptom there is a link error or an
+  # app that dies at launch.
   #
-  # So this rebuilds the same runner the ios job built, with the tree's own
-  # framework and project reference switched off and the two packages switched
-  # on, and launches it. Same checks, same tally, same exit code - the only
+  # So each row rebuilds the same runner the test matrix ran, with the tree's
+  # own project reference and native switched off and the packages switched
+  # on, and runs it. Same checks, same tally, same exit code - the only
   # difference is where the binding and the native came from, which is the
   # whole question.
   #
-  # It needs `pack` rather than `ios`, and it downloads the nupkg artifact
-  # rather than building anything native: the bytes under test are the ones
-  # that would be pushed to nuget.org, not a second build of the same commit.
-  # Which also means this is the job that would notice a packaging change that
-  # packs an empty framework, or drops the .targets file, or names the wrong
-  # buildTransitive folder - none of which anything else here can see.
-  ios-package:
-    name: Build and test (iOS package)
+  # It needs `pack` and downloads the nupkg artifact rather than building
+  # anything native: the bytes under test are the ones that would be pushed
+  # to nuget.org, not a second build of the same commit. Which also means this
+  # is the job that would notice a packaging change that packs an empty
+  # payload, drops a .targets file, or names the wrong RID or buildTransitive
+  # folder - none of which anything else here can see.
+  package:
+    name: Test package (${{ matrix.name }})
     needs: pack
-    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux
+            os: ubuntu-latest
+            platform: linux
+          - name: macOS
+            os: macos-latest
+            platform: macos
+          - name: Windows
+            os: windows-latest
+            platform: windows
+          - name: iOS Simulator
+            os: macos-latest
+            platform: ios
+            mobile: true
+          - name: Android emulator
+            os: ubuntu-latest
+            platform: android
+            mobile: true
+    runs-on: ${{ matrix.os }}
+
+    env:
+      FFAUDIO_PACKAGE_VERSION: ${{ needs.pack.outputs.version }}
+
+    defaults:
+      run:
+        shell: bash
 
     steps:
       - uses: actions/checkout@v4
@@ -455,8 +495,9 @@ jobs:
         with:
           dotnet-version: 10.0.x
 
-      - name: Install the iOS workload
-        run: dotnet workload install ios
+      - name: Install the mobile workload
+        if: matrix.mobile
+        run: dotnet workload install ${{ matrix.platform }}
 
       - uses: actions/download-artifact@v4
         with:
@@ -470,13 +511,52 @@ jobs:
       - name: Point NuGet at what was packed
         run: |
           dotnet new nugetconfig
-          dotnet nuget add source "$PWD/artifacts/nupkg" --name packed --configfile nuget.config
+          dotnet nuget add source "${{ github.workspace }}/artifacts/nupkg" --name packed --configfile nuget.config
           cat nuget.config
 
-      - name: Run the checks against the package
+      # Native.Resolve walks up to native/artifacts/ before it asks the loader
+      # by name, which is how the tree's own runs find a native. Here that walk
+      # must find nothing, or a green run proves the tree rather than the
+      # package. A fresh checkout builds no natives, and this says so out loud
+      # rather than leaving it to be true by accident.
+      - name: Check nothing native is in the tree
+        run: |
+          if [ -e native/artifacts ]; then
+            echo "::error::native/artifacts exists - this run would not be testing the package"
+            exit 1
+          fi
+
+      # Every shipped package is LGPL-only, Windows' pinned download and the
+      # static desktop builds alike, so the licence gate is on for all three.
+      - name: Test package
+        if: ${{ !matrix.mobile }}
         env:
-          FFAUDIO_PACKAGE_VERSION: ${{ needs.pack.outputs.version }}
-        run: scripts/ios-device-checks.sh
+          FFAUDIO_REQUIRE_LGPL: 1
+        run: dotnet run --project tests/checks/FFAudio.Checks.Desktop --configuration Release -p:FFAudioPackageVersion="$FFAUDIO_PACKAGE_VERSION"
+
+      - name: Test package
+        if: matrix.platform == 'ios'
+        run: tests/checks/FFAudio.Checks.iOS/run.sh
+
+      # As in the test matrix: KVM for the emulator, and the action owns its
+      # lifecycle while the script is told which one to use.
+      - name: Let the emulator use KVM
+        if: matrix.platform == 'android'
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Test package
+        if: matrix.platform == 'android'
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 30
+          arch: x86_64
+          target: default
+          emulator-options: -no-window -no-audio -no-boot-anim -no-snapshot-load -gpu swiftshader_indirect
+          script: FFAUDIO_ANDROID_SERIAL=emulator-5554 tests/checks/FFAudio.Checks.Android/run.sh
 
   # Tags only, and only after every test job, the pack above, and the run that
   # used what it packed have gone green - `needs` is what makes that a
@@ -489,7 +569,7 @@ jobs:
   # compilation of the same commit that nobody looked at.
   publish:
     name: Publish to NuGet
-    needs: [pack, ios-package]
+    needs: [pack, package]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
 
