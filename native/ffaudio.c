@@ -48,6 +48,7 @@ struct ffaudio_decoder {
     ffaudio_read_fn  io_read;
     ffaudio_seek_fn  io_seek;
     int             seekable;
+    int             io_error;        // callback failure FFmpeg may rewrite
 
     int64_t last_frame_ms;
 
@@ -66,8 +67,10 @@ static int io_read_packet(void *opaque, uint8_t *buffer, int buf_size)
     int read = dec->io_read(dec->io_opaque, buffer, buf_size);
     if (read == 0)
         return AVERROR_EOF;
-    if (read < 0)
-        return AVERROR(EIO);
+    if (read < 0) {
+        dec->io_error = AVERROR(EIO);
+        return dec->io_error;
+    }
     return read;
 }
 
@@ -240,6 +243,11 @@ static int is_trailing_ape_tag(ffaudio_decoder *dec)
         }
     }
 
+    // A source failure is never a valid end tag, even when the demuxer
+    // reported it as invalid WavPack data before this drain began.
+    if (dec->io_error)
+        return 0;
+
     int64_t end = avio_tell(pb);
     int id3v1 = tail_bytes >= FFAUDIO_APE_FOOTER_BYTES + FFAUDIO_ID3V1_BYTES
         && memcmp(tail + tail_bytes - FFAUDIO_ID3V1_BYTES, "TAG", 3) == 0;
@@ -286,6 +294,10 @@ static int stage_next(ffaudio_decoder *dec)
         }
 
         rc = av_read_frame(dec->fmt, dec->packet);
+        // Demuxers sometimes replace a custom AVIO error with a container
+        // error. Preserve the actual source failure once no packet remains.
+        if (rc < 0 && dec->io_error)
+            return dec->io_error;
         if (rc == AVERROR_EOF || (rc == AVERROR_INVALIDDATA && is_trailing_ape_tag(dec))) {
             dec->packet_drained = 1;
             continue;
@@ -606,14 +618,20 @@ FFAUDIO_API int ffaudio_decoder_open_io(void *opaque,
         forced = av_find_input_format(format_hint);
 
     rc = avformat_open_input(&dec->fmt, NULL, forced, NULL);
-    if (rc < 0)
+    if (rc < 0) {
+        if (dec->io_error)
+            rc = dec->io_error;
         goto fail;
+    }
 
     size_attached_pictures(dec->fmt);
 
     rc = avformat_find_stream_info(dec->fmt, NULL);
-    if (rc < 0)
+    if (rc < 0) {
+        if (dec->io_error)
+            rc = dec->io_error;
         goto fail;
+    }
 
     rc = finish_open(dec);
     if (rc != FFAUDIO_OK)

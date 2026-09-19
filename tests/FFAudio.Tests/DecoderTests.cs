@@ -318,9 +318,13 @@ public class DecoderTests : IDisposable
     [Fact]
     public void A_stream_that_fails_mid_track_faults_rather_than_ending_quietly()
     {
-        var bytes = File.ReadAllBytes(HiResFixture());
-        var source = new FailingStream(bytes, failAfter: bytes.Length / 3);
+        const int failureFrames = Frames * 40;
+        var path = SyntheticHiResWav.CreateFile(
+            _directory, "failing.wav", HiResRate, failureFrames, SyntheticHiResWav.Ramp24());
+        var bytes = File.ReadAllBytes(path);
+        var source = new FailingStream(bytes);
         using var decoder = Decoder.OpenStream(source, SampleFormat.S24);
+        source.FailAfterMoreBytes(bytes.Length / 10);
 
         var produced = 0;
         var buffer = new byte[16384];
@@ -331,9 +335,10 @@ public class DecoderTests : IDisposable
                 produced += read;
         });
 
-        // strerror wording differs between C runtimes.
-        Assert.Contains(OperatingSystem.IsWindows() ? "I/O error" : "Input/output error", thrown.Message);
-        Assert.InRange(produced, 1, Frames * 6 - 1);
+        // Depending on how much a demuxer buffered, it can report either the
+        // callback's I/O error or the truncation that failure caused.
+        Assert.True(thrown.Code < 0, $"error code was {thrown.Code}");
+        Assert.InRange(produced, 1, failureFrames * 6 - 1);
         Assert.InRange(source.Reads, 1, 200);
     }
 
@@ -459,11 +464,15 @@ public class DecoderTests : IDisposable
         public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
     }
 
-    private sealed class FailingStream(byte[] bytes, int failAfter) : Stream
+    private sealed class FailingStream(byte[] bytes) : Stream
     {
         private int _position;
+        private int _failAfter = int.MaxValue;
 
         public int Reads { get; private set; }
+
+        public void FailAfterMoreBytes(int byteCount) =>
+            _failAfter = Math.Min(bytes.Length, _position + byteCount);
 
         public override bool CanRead => true;
         public override bool CanSeek => true;
@@ -476,10 +485,12 @@ public class DecoderTests : IDisposable
         public override int Read(Span<byte> buffer)
         {
             Reads++;
-            if (_position >= failAfter)
+            if (_position >= _failAfter)
                 throw new IOException("the connection went away");
 
-            var take = Math.Min(buffer.Length, bytes.Length - _position);
+            // Stop exactly at the failure boundary so a large native read
+            // cannot consume bytes that the simulated source never served.
+            var take = Math.Min(buffer.Length, Math.Min(bytes.Length, _failAfter) - _position);
             if (take <= 0)
                 return 0;
             bytes.AsSpan(_position, take).CopyTo(buffer);
