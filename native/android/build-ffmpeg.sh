@@ -20,7 +20,7 @@ set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 work="$here/ffmpeg"
-version="${FFAUDIO_FFMPEG_VERSION:-7.1.1}"
+version="${FFAUDIO_FFMPEG_VERSION:-9.0.2}"
 
 # 21 rather than the csproj's minSdk of 23, to match native/miniaudio/android's
 # API level exactly: two native libraries in one APK disagreeing about their
@@ -94,7 +94,7 @@ build_abi() {
             --extra-cflags="-O2 -fPIC" \
             --enable-static --disable-shared --enable-pic \
             --disable-programs --disable-doc --disable-debug \
-            --disable-avdevice --disable-avfilter --disable-swscale --disable-postproc \
+            --disable-avdevice --disable-avfilter --disable-swscale \
             --disable-network --disable-iconv --disable-sdl2 \
             "${components[@]}" \
             "${extra[@]}"

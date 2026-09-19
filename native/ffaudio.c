@@ -985,7 +985,7 @@ FFAUDIO_API int ffaudio_ffmpeg_configuration(char *buffer, int32_t buffer_bytes)
 }
 
 // av_version_info is the git describe of the FFmpeg the binary was built from
-// - "7.1.1", or "n7.1-32-gabc1234" for a checkout between releases - which is
+// - "9.0.2", or "n9.0.1-84-g946fcce07b" for a checkout between releases - which is
 // the version a relink has to start from. It is absent from some vendored
 // builds, in which case the numeric avutil version is all there is to say.
 FFAUDIO_API int ffaudio_ffmpeg_version(char *buffer, int32_t buffer_bytes)

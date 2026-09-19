@@ -304,7 +304,8 @@ The one platform with nothing to find: no distro package, no MacPorts, no
 pkg-config to ask. It is also the one platform where cross-compiling FFmpeg
 buys nothing, because FFmpeg publishes Windows builds whose LGPL variant is
 already configured correctly and ships the libraries as separate, replaceable
-DLLs. So the script downloads a pinned, checksummed BtbN autobuild and
+DLLs. So the script downloads a pinned, checksummed BtbN autobuild — mirrored
+in a release on this repo, since BtbN deletes its dailies — and
 `CMakeLists.txt` finds it through `FFAUDIO_PREFIX` rather than pkg-config.
 
 Five DLLs come out rather than one: `ffaudio.dll` imports avformat, avcodec,
@@ -407,7 +408,7 @@ and neither travels with a `.dylib` that has been copied into a NuGet, embedded
 in an app bundle and shipped. avutil travels with it:
 
 ```csharp
-FFmpegBuild.Version           // "7.1.1", or a git describe
+FFmpegBuild.Version           // "9.0.2", or a git describe
 FFmpegBuild.License           // "LGPL version 2.1 or later" — or "GPL version 2 or later"
 FFmpegBuild.Configuration     // the configure line, verbatim
 FFmpegBuild.IsRedistributable // whether this particular binary may be shipped

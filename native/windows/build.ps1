@@ -37,14 +37,28 @@ $root = Resolve-Path (Join-Path $here "../..")
 $build = Join-Path $here "build"
 $out = Join-Path $root "native/artifacts/windows"
 
-# Pinned to a dated autobuild rather than the "latest" tag, whose assets are
-# rebuilt daily under the same names: a version floor of FFmpeg 5.1 says what
-# the façade needs to compile, and this says what it was last known to compile
-# against. The checksum is the whole point of pinning - without it this is a
-# script that runs whatever a download gave it.
-$release = "autobuild-2026-09-04-14-01"
-$asset = "ffmpeg-n8.1.2-50-g1a748fe2cd-win64-lgpl-shared-8.1.zip"
-$sha256 = "d4a0db2e182e6d1535a022523d329daf8daff9d69db88d5aa569732005cffa91"
+# Pinned to one exact FFmpeg release - the same one host-ffmpeg.sh and both
+# phone builds compile from source - rather than to whatever BtbN's "latest"
+# tag holds today: a version floor of FFmpeg 5.1 says what the façade needs to
+# compile, and this says what it was last known to compile against. The
+# checksum is the whole point of pinning - without it this is a script that
+# runs whatever a download gave it.
+#
+# Downloaded from a release on this repo rather than from BtbN's, because
+# BtbN prunes its daily builds after about two weeks and keeps only the last
+# one of each month - and a release rarely lands on the last day of a month.
+# A pin that 404s a fortnight later is how the previous one ended. So the
+# asset is BtbN's build, byte for byte, copied once into a release here that
+# nothing prunes; the file name is BtbN's own and says which build it was.
+# This one is release/9.0 at 946fcce07b, which is the n9.0.2 tag - BtbN names
+# it by describing from n9.0.1, hence the -84.
+#
+# To move to another FFmpeg: take the win64-lgpl-shared zip for that release
+# from BtbN, upload it to a new ffmpeg-win64-<version> release here, and bump
+# the three lines below along with FFAUDIO_FFMPEG_VERSION in the other builds.
+$release = "ffmpeg-win64-9.0.2"
+$asset = "ffmpeg-n9.0.1-84-g946fcce07b-win64-lgpl-shared-9.0.zip"
+$sha256 = "a2a50423b631cb51e91c2668c16a4807197c50d1f5fc56dd4516ca188a0d731f"
 
 if (-not $Prefix) {
     $downloads = Join-Path $here "ffmpeg"
@@ -55,7 +69,7 @@ if (-not $Prefix) {
         New-Item -ItemType Directory -Force -Path $downloads | Out-Null
 
         if (-not (Test-Path $zip)) {
-            $url = "https://github.com/BtbN/FFmpeg-Builds/releases/download/$release/$asset"
+            $url = "https://github.com/yanos/FFAudio.NET/releases/download/$release/$asset"
             Write-Host "==> Downloading $asset"
             # Invoke-WebRequest's progress bar makes this download several
             # times slower on a CI runner, where nothing is watching it.

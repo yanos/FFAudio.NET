@@ -23,7 +23,7 @@ set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 work="$here/ffmpeg"
-version="${FFAUDIO_FFMPEG_VERSION:-7.1.1}"
+version="${FFAUDIO_FFMPEG_VERSION:-9.0.2}"
 deployment_target=12.2
 
 mkdir -p "$work"
@@ -88,7 +88,7 @@ build_slice() {
             --extra-ldflags="-target $triple -isysroot $sysroot" \
             --enable-static --disable-shared --enable-pic \
             --disable-programs --disable-doc --disable-debug \
-            --disable-avdevice --disable-avfilter --disable-swscale --disable-postproc \
+            --disable-avdevice --disable-avfilter --disable-swscale \
             --disable-network --disable-iconv --disable-sdl2 --disable-audiotoolbox \
             "${components[@]}"
         ffaudio_assert_lgpl "$build"

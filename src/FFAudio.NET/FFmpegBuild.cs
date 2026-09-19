@@ -32,7 +32,7 @@ namespace FFAudio
         // kilobyte for a distro build.
         public static string Configuration => _configuration ??= Read(Native.FfmpegConfiguration);
 
-        // "7.1.1", or a git describe like "n7.1-32-gabc1234" for a checkout
+        // "9.0.2", or a git describe like "n9.0.1-84-g946fcce07b" for a checkout
         // between releases. Falls back to the numeric libavutil version for a
         // build that carries no version string at all.
         public static string Version => _version ??= Read(Native.FfmpegVersion);

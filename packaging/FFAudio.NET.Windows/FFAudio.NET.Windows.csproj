@@ -13,7 +13,7 @@
        replaceable, which is the LGPL route this platform takes.
 
        A glob rather than four names, because the DLL filenames carry FFmpeg's
-       soversion - avcodec-62.dll today - and pinning those here would be a
+       soversion - avcodec-63.dll today - and pinning those here would be a
        second place to bump on every FFmpeg update. -->
   <ItemGroup>
     <None Include="../../native/artifacts/windows/*.dll"

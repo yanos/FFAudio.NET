@@ -31,7 +31,7 @@
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-version="${FFAUDIO_FFMPEG_VERSION:-7.1.1}"
+version="${FFAUDIO_FFMPEG_VERSION:-9.0.2}"
 
 case "$(uname -s)" in
     Darwin) platform=macos ;;
@@ -159,7 +159,7 @@ fi
         --enable-static --disable-shared --enable-pic \
         --disable-autodetect \
         --disable-programs --disable-doc --disable-debug \
-        --disable-avdevice --disable-avfilter --disable-swscale --disable-postproc \
+        --disable-avdevice --disable-avfilter --disable-swscale \
         --disable-network --disable-iconv --disable-sdl2 \
         --enable-zlib \
         "${platform_flags[@]+"${platform_flags[@]}"}" \
