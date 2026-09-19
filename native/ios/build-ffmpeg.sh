@@ -6,8 +6,8 @@
 # FFmpeg through pkg-config and link against it, and there is nothing here to
 # find. It is also the only build in this repo where the licensing constraint
 # is not advisory - a phone build links FFmpeg *in*, so the configure line
-# below is the thing that makes the result distributable. No --enable-gpl and
-# no --enable-nonfree, ever; see ../README.md.
+# below is the thing that makes the repository build distributable under the
+# LGPL. Callers may opt into other terms; see ../../README.md.
 #
 # It builds a named set of decoders and demuxers rather than all of them:
 # --disable-everything and an explicit list. That is mostly about size, since
@@ -90,6 +90,7 @@ build_slice() {
             --disable-programs --disable-doc --disable-debug \
             --disable-avdevice --disable-avfilter --disable-swscale \
             --disable-network --disable-iconv --disable-sdl2 --disable-audiotoolbox \
+            "${ffaudio_extra_configure_flags[@]+"${ffaudio_extra_configure_flags[@]}"}" \
             "${components[@]}"
         ffaudio_assert_lgpl "$build"
         make -j"$(sysctl -n hw.ncpu)"

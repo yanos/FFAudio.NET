@@ -48,6 +48,15 @@ case "$ffaudio_variant" in
     *) echo "FFAUDIO_VARIANT must be 'slim' or 'full', not '$ffaudio_variant'." >&2; return 1 2>/dev/null || exit 1 ;;
 esac
 
+# Optional FFmpeg configure switches supplied by the caller. This is primarily
+# for licensing choices such as --enable-gpl or --enable-nonfree, but accepts
+# any whitespace-separated configure flags. Values containing whitespace are
+# not supported; put compiler and linker flags in the platform scripts.
+ffaudio_extra_configure_flags=()
+if [ -n "${FFAUDIO_FFMPEG_CONFIGURE_FLAGS:-}" ]; then
+    read -r -a ffaudio_extra_configure_flags <<< "$FFAUDIO_FFMPEG_CONFIGURE_FLAGS"
+fi
+
 # Every audio decoder in an unpacked FFmpeg source tree, read out of
 # libavcodec/allcodecs.c.
 #
@@ -113,11 +122,10 @@ ffaudio_component_flags() {
     printf '%s\n' --enable-protocol=file
 }
 
-# What the configure line above is actually for. Checked rather than
-# remembered: FFmpeg may be linked into a shipped binary only under the LGPL,
-# a static phone build is the case where that stops being someone else's
-# distro package, and the generated config.h answers it in one line. A build
-# that got this wrong would link and run and pass every test in this repo.
+# Repository builds are LGPL-only by default. A caller may deliberately choose
+# another configuration, but must acknowledge the different distribution
+# terms with FFAUDIO_ALLOW_NON_LGPL=1. Checking config.h catches both explicit
+# flags and licensing changes pulled in by other configure options.
 ffaudio_assert_lgpl() {
     local build_dir="$1"
     local header="$build_dir/config.h"
@@ -126,8 +134,16 @@ ffaudio_assert_lgpl() {
     local flag
     for flag in GPL NONFREE; do
         if grep -q "^#define CONFIG_$flag 1\$" "$header"; then
-            echo "This FFmpeg configured with CONFIG_$flag set. That build cannot be shipped; see README.md." >&2
-            return 1
+            if [ -z "${FFAUDIO_ALLOW_NON_LGPL:-}" ]; then
+                echo "This FFmpeg configured with CONFIG_$flag set. Set FFAUDIO_ALLOW_NON_LGPL=1 to acknowledge the changed redistribution terms; see README.md." >&2
+                return 1
+            fi
+
+            if [ "$flag" = GPL ]; then
+                echo "WARNING: This FFmpeg is GPL, not LGPL. Distribution must comply with the GPL." >&2
+            else
+                echo "WARNING: This FFmpeg is nonfree. FFmpeg marks the resulting binary as unredistributable." >&2
+            fi
         fi
     done
 }

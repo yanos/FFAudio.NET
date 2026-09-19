@@ -5,8 +5,8 @@
 # Same reason as ios/build-ffmpeg.sh: a phone has no package manager, so there
 # is nothing for pkg-config to find and the decoder has to bring its own
 # FFmpeg. And the same licensing consequence - Android links FFmpeg *in*, so
-# this configure line is what makes the result distributable. No --enable-gpl
-# and no --enable-nonfree, ever; see ../README.md.
+# this configure line is what makes the repository build distributable under
+# the LGPL. Callers may opt into other terms; see ../../README.md.
 #
 # What it may decode is ../codec-set.sh's, shared with the iOS build rather
 # than restated here: what a phone can play should not depend on which phone.
@@ -96,6 +96,7 @@ build_abi() {
             --disable-programs --disable-doc --disable-debug \
             --disable-avdevice --disable-avfilter --disable-swscale \
             --disable-network --disable-iconv --disable-sdl2 \
+            "${ffaudio_extra_configure_flags[@]+"${ffaudio_extra_configure_flags[@]}"}" \
             "${components[@]}" \
             "${extra[@]}"
         ffaudio_assert_lgpl "$build"

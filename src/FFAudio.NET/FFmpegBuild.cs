@@ -12,13 +12,12 @@ namespace FFAudio
     // was made.
     //
     // This exists for the licence, which is the one property of an FFmpeg build
-    // that cannot be fixed after the fact. FFmpeg may be linked here only under
-    // the LGPL: no --enable-gpl, no --enable-nonfree. On desktop that is
-    // somebody else's package and the answer varies by machine - a MacPorts or
-    // Homebrew FFmpeg is GPL-enabled and cannot be shipped, which is fine for
-    // development and fatal for a release. On a phone it is linked in, and the
-    // relink route the LGPL asks for starts with Configuration below: the exact
-    // arguments that produced what is inside the binary.
+    // that cannot be fixed after the fact. This repository ships FFmpeg under
+    // the LGPL, without --enable-gpl or --enable-nonfree. A custom build may
+    // choose other terms, so the answer varies by machine. On a phone FFmpeg
+    // is linked in, and the relink route the LGPL asks for starts with
+    // Configuration below: the exact arguments that produced what is inside
+    // the binary.
     //
     // Nothing here opens a file or touches a decoder, so it is safe to ask
     // before anything else and cheap to log at startup.

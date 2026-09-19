@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds a static, LGPL-only FFmpeg for *this* machine - macOS or Linux, host
+# Builds a static, LGPL FFmpeg by default for *this* machine - macOS or Linux, host
 # architecture - into native/<platform>/ffmpeg/prefix/<variant>/<arch>/.
 #
 # The desktop equivalent of ios/build-ffmpeg.sh and android/build-ffmpeg.sh,
@@ -163,6 +163,7 @@ fi
         --disable-network --disable-iconv --disable-sdl2 \
         --enable-zlib \
         "${platform_flags[@]+"${platform_flags[@]}"}" \
+        "${ffaudio_extra_configure_flags[@]+"${ffaudio_extra_configure_flags[@]}"}" \
         "${components[@]}"
     # What the configure line above was for. Mechanical rather than
     # remembered: a GPL-enabled build links and runs and passes every test in

@@ -9,9 +9,11 @@ managed binding in src/ are licensed under the Apache License, Version 2.0
 FFmpeg — LGPL-2.1-or-later
 --------------------------------------------------------------------------
 This software links against FFmpeg (avformat, avcodec, avutil, swresample)
-and is not itself a work of FFmpeg. FFmpeg is used under the LGPL only: no
-build produced by this repository may be configured with --enable-gpl or
---enable-nonfree, and the generated config.h must report CONFIG_GPL 0.
+and is not itself a work of FFmpeg. The binaries distributed by this project
+use FFmpeg under the LGPL: their generated config.h reports CONFIG_GPL 0 and
+CONFIG_NONFREE 0. The build scripts also permit explicit custom GPL or nonfree
+builds; those builds have different redistribution terms and are not covered
+by the LGPL distribution guidance below.
 
 Full license text: https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html
 Source: https://ffmpeg.org/download.html
