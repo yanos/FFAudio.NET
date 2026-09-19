@@ -143,7 +143,7 @@ ABI 1.3MB, and nobody should pay for both.
 
 | Package | Holds |
 |---|---|
-| `FFAudio.NET` | the managed binding — this is the one you reference |
+| `FFAudio.NET` | the managed binding, for `net8.0` and `net10.0` — this is the one you reference |
 | `FFAudio.NET.macOS` | `runtimes/osx-arm64/native/libffaudio.dylib` |
 | `FFAudio.NET.Linux` | `runtimes/linux-x64/native/libffaudio.so` |
 | `FFAudio.NET.Windows` | `runtimes/win-x64/native/` — the façade plus the four FFmpeg DLLs it imports |
