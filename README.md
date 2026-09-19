@@ -571,10 +571,16 @@ matched the first. So the chain is `test` on three desktops → `pack` →
 `if: startsWith(github.ref, 'refs/tags/v')`.
 
 The publish job has no checkout and no build step. It downloads the package
-`pack` produced and pushes those exact bytes to nuget.org with the
-`NUGET_API_KEY` repository secret — so what gets published is the artifact of
-a green run, not a second compilation of the same commit that nobody looked
-at.
+`pack` produced and pushes those exact bytes to nuget.org — so what gets
+published is the artifact of a green run, not a second compilation of the same
+commit that nobody looked at.
+
+It pushes with NuGet trusted publishing rather than a stored API key. The job
+runs in the `release` environment with `id-token: write`, and `NuGet/login`
+trades GitHub's OIDC token for a key that expires in an hour. nuget.org only
+accepts the token because a trusted publishing policy on the account in the
+`NUGET_USER` secret names this repository, `ci.yml` and the `release`
+environment.
 
 The version it checks comes from `pack`, which asks MinVer and hands the
 answer down as a job output; `publish` compares that against the tag before
@@ -707,5 +713,4 @@ no other setup. The mobile two have been packed and their layout checked, but
 no phone project has consumed one — that is the first thing to do with them.
 
 Nothing is published to NuGet yet: the workflow and the versioning are in
-place, but no `v*` tag has been cut and no `NUGET_API_KEY` secret has been
-set.
+place, but no `v*` tag has been cut yet.

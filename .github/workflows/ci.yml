@@ -493,6 +493,20 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
 
+    # Trusted publishing: there is no long-lived API key anywhere. nuget.org
+    # trusts an OIDC token GitHub mints for this job, and only this job - the
+    # policy on nuget.org names this repository, this workflow file and this
+    # environment, so a token from any other workflow, or from a job outside
+    # the environment, is refused. id-token: write is what lets the job ask
+    # for that token; the workflow-wide contents: read does not carry over
+    # once a job declares permissions of its own, and nothing here needs it.
+    #
+    # The environment is also where a required reviewer or a tag-only
+    # deployment rule would go, in the repository's settings rather than here.
+    environment: release
+    permissions:
+      id-token: write
+
     steps:
       - uses: actions/setup-dotnet@v4
         with:
@@ -525,19 +539,23 @@ jobs:
             echo "Publishing $VERSION as a pre-release ($PRERELEASE)" >> "$GITHUB_STEP_SUMMARY"
           fi
 
+      # Trades the job's OIDC token for an API key that lives for an hour and
+      # can push only the packages this account owns. NUGET_USER is the
+      # nuget.org account name - the profile, not an email - that owns the
+      # trusted publishing policy.
+      - name: Log in to NuGet
+        id: nuget
+        uses: NuGet/login@v1
+        with:
+          user: ${{ secrets.NUGET_USER }}
+
       # --skip-duplicate so re-running a failed job after a partial push is
       # harmless rather than a hard error on a version that is already up.
       # The .snupkg beside each package goes with it; `dotnet nuget push`
       # sends symbol packages alongside the ones they belong to.
       - name: Push to NuGet
-        env:
-          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
         run: |
-          if [ -z "$NUGET_API_KEY" ]; then
-            echo "::error::NUGET_API_KEY is not set - add it as a repository secret"
-            exit 1
-          fi
           dotnet nuget push 'artifacts/nupkg/*.nupkg' \
             --source https://api.nuget.org/v3/index.json \
-            --api-key "$NUGET_API_KEY" \
+            --api-key "${{ steps.nuget.outputs.NUGET_API_KEY }}" \
             --skip-duplicate
