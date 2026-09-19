@@ -25,15 +25,30 @@ while ((read = decoder.Read(buffer)) > 0)
     sink.Write(buffer.AsSpan(0, read));
 ```
 
-A stream works the same way, and the `Stream` is yours:
+A stream works the same way. The `Stream` stays yours unless you pass
+`ownsStream: true`, and a format hint that turns out to be wrong falls back to
+probing, with a warning to the `ILogger` if you pass one:
 
 ```csharp
-using var decoder = Decoder.OpenStream(await http.GetSeekableStreamAsync(url),
+using var decoder = Decoder.OpenStream(stream,                // any readable Stream; seekable to seek
                                        SampleFormat.F32,
                                        formatHint: "mp4");
 
 var landed = decoder.Seek(TimeSpan.FromMinutes(2));   // at or before the request
 ```
+
+For a complete program that uses all of it, see the checks under
+[`tests/checks/`](tests/checks). They are the example projects:
+
+- [`FFAudio.Checks/DecodeChecks.cs`](tests/checks/FFAudio.Checks/DecodeChecks.cs)
+  calls every public member of the library, one short check at a time.
+- [`FFAudio.Checks.Desktop`](tests/checks/FFAudio.Checks.Desktop) is a console
+  app. Its project file shows how to reference `FFAudio.NET` and the payload
+  package for each desktop OS.
+- [`FFAudio.Checks.iOS`](tests/checks/FFAudio.Checks.iOS) and
+  [`FFAudio.Checks.Android`](tests/checks/FFAudio.Checks.Android) are the
+  smallest phone apps that consume the library, from this tree or from the
+  packages.
 
 ## What the file says
 
@@ -47,7 +62,7 @@ foreach (var (key, value) in decoder.Tags)
     Console.WriteLine($"{key} = {value}");        // "title", "artist", ...
 
 if (decoder.TryReadCoverArt() is { } art)
-    File.WriteAllBytes($"cover{Path.GetExtension(art.MimeType)}", art.Bytes);
+    File.WriteAllBytes($"cover.{art.MimeType.Split('/')[1]}", art.Bytes);  // "image/jpeg" -> cover.jpeg
 
 Console.WriteLine(decoder.Format.ChannelLayout);  // "stereo", "5.1(side)"
 Console.WriteLine(decoder.Format.Codec);          // "flac"
@@ -195,7 +210,7 @@ avcodec for a façade that calls four functions. That list is in
 | `FFAUDIO_VARIANT` | What it decodes | Size |
 |---|---|---|
 | `slim` (default) | A music library: MP3, AAC/ALAC, FLAC, Vorbis, Opus, WavPack, APE, DSD, the PCM family — 22 decoders, 12 demuxers | iOS slice ~1.9MB, Android ABI ~1.3MB |
-| `full` | Every audio decoder FFmpeg has and every demuxer it has — 201 decoders, 350 demuxers | Untested; expect several times that |
+| `full` | Every audio decoder FFmpeg has and every demuxer it has — 201 decoders, 350 demuxers in 7.1.1 | Untested; expect several times that |
 
 ```
 FFAUDIO_VARIANT=full native/ios/build-ffmpeg.sh && FFAUDIO_VARIANT=full native/ios/build.sh
@@ -214,9 +229,10 @@ file a caller hands over is theirs to name rather than ours to predict.
 configure warns that it dropped the handful needing network or an external
 library, which is the intended outcome.
 
-This is a property of the *static* builds only. macOS and Linux link the
-system FFmpeg through `pkg-config` and decode whatever that build decodes;
-Windows decodes whatever the pinned download has.
+This is a property of the *static* builds only: both phones, and macOS and
+Linux under `FFAUDIO_STATIC=1`, which is what gets packed. A development build
+on macOS or Linux links the system FFmpeg through `pkg-config` and decodes
+whatever that build decodes. Windows decodes whatever the pinned download has.
 
 Both variants keep the prefix `build-ffmpeg.sh` produced, under
 `ffmpeg/prefix/<variant>/`, so switching between them is a relink rather than
@@ -320,8 +336,7 @@ binary rather than from an absolute path. That is the portability the other
 two desktops had to link statically to get, and the licence obligation is
 easier to meet in this shape rather than harder — the libraries are separate
 and replaceable by construction. A static MSVC FFmpeg would be a worse answer
-to a question Windows does not have, which is the honest version of what
-`docs/DECODER-LIBRARY-PLAN.md` calls the unscoped Windows half.
+to a question Windows does not have.
 
 ### iOS
 
@@ -422,14 +437,17 @@ arguments needed to reproduce what is inside it.
 is allowed to be no — a developer's machine is expected to fail it. What must
 never happen is shipping one without noticing, so
 `FFmpegBuildTests.A_shipping_build_carries_an_lgpl_only_ffmpeg` asserts it
-whenever `FFAUDIO_REQUIRE_LGPL` is set, and skips otherwise. CI sets it on
-Windows only: that FFmpeg is a pinned LGPL build this repo chose, where
-Linux's and macOS's come from apt and brew. So the gate doubles as a check
-that the pinned Windows asset is still what its name says.
+whenever `FFAUDIO_REQUIRE_LGPL` is set, and skips otherwise. CI sets it
+wherever the FFmpeg is one this repo chose. That covers the test run on
+Windows, whose FFmpeg is the pinned LGPL download, so the gate doubles as a
+check that the asset is still what its name says. It also covers the checks
+against the static Linux and macOS natives, and every "Test package" row. It
+is off only for the Linux and macOS test runs against apt's and brew's FFmpeg.
 
 The build asserts the same thing from the other side, where it can:
 `ffaudio_assert_lgpl` reads the generated `config.h` after configure and stops
-a mobile build whose `CONFIG_GPL` or `CONFIG_NONFREE` came back set. Two
+any FFmpeg build this repo runs (phone or static desktop) whose `CONFIG_GPL`
+or `CONFIG_NONFREE` came back set. Two
 checks because they fail at different times — one when the FFmpeg is built,
 one when a binary that already exists is asked.
 
@@ -577,9 +595,9 @@ git push origin v1.2.3
 two because `needs:` and artifacts only reach across jobs of the same run: a
 separate publish workflow firing on the same tag could not depend on the tests
 or download what they built, only repeat the work and hope the second answer
-matched the first. So the chain is `test` — one matrix across three desktops
-and both phones — → `pack` → `publish`, and the last of those is gated on the
-tag with
+matched the first. So the chain is `test` (one matrix across three desktops
+and both phones) → `pack` → `package` (the same five rows, testing the packed
+`.nupkg` files) → `publish`. The last of those is gated on the tag with
 `if: startsWith(github.ref, 'refs/tags/v')`.
 
 The publish job has no checkout and no build step. It downloads the package
@@ -607,9 +625,14 @@ A folder is a valid NuGet feed, so the package can be consumed for real
 without anything leaving the machine:
 
 ```
+native/build-all.sh macos                    # or FFAUDIO_STATIC=1 native/macos/build.sh for a portable one
 dotnet pack src/FFAudio.NET/FFAudio.NET.csproj -c Release -o /tmp/nupkg
-dotnet nuget push /tmp/nupkg/FFAudio.NET.*.nupkg --source /tmp/localfeed
+dotnet pack packaging/FFAudio.NET.macOS -c Release -o /tmp/nupkg
+dotnet nuget push "/tmp/nupkg/*.nupkg" --source /tmp/localfeed
 ```
+
+Each payload project packs whatever is under `native/artifacts/<platform>/`
+and fails if it finds nothing there.
 
 Then, in a throwaway consumer project, a `nuget.config` that points at it:
 
@@ -634,19 +657,18 @@ contents and restoring again gets you the *first* one back, out of
 `~/.nuget/packages`, forever. Giving the consumer its own cache means deleting
 a directory is enough to start over.
 
-What the consumer will not get from the package today is a decoder — that is
-the per-platform native package under **Packaging**, which does not exist yet.
-Until it does, point `FFAUDIO_LIBRARY` at a built artifact or drop it beside
-the consumer's own binary, which is the same place a `runtimes/<rid>/native/`
-payload would land:
+The consumer needs both `FFAudio.NET` and the payload package for its
+platform. With the binding alone, `Decoder.OpenPath` throws
+`DllNotFoundException` out of `EnsureAbi`: the managed half is fine, and there
+is nothing for it to call. `FFAUDIO_LIBRARY` still overrides whatever the
+package delivered:
 
 ```
 FFAUDIO_LIBRARY=…/native/artifacts/macos/libffaudio.dylib dotnet run
 ```
 
-Without one, `Decoder.OpenPath` throws `DllNotFoundException` out of
-`EnsureAbi` — the managed half of the package is fine, and there is nothing
-for it to call.
+The checks runners in package mode (see **Device checks**) are this same
+experiment, already written, for every platform.
 
 `.github/workflows/ci.yml` builds the façade and runs the suite against it on
 all three desktops on every push, runs the device checks on an iOS Simulator
@@ -670,11 +692,10 @@ misses the cache, and every other run is just the façade's single translation
 unit.
 
 Every build job uploads what it produced: `ffaudio-Linux`, `ffaudio-macOS`,
-`ffaudio-Windows`, `ffaudio-iOS`, `ffaudio-Android`. Nothing downstream
-consumes them yet — the package still carries no decoder — but a built native
-from every platform, at one commit, in one run, is the half of a
-`runtimes/<rid>/native/` payload that has to exist before the other half is
-worth writing.
+`ffaudio-Windows`, `ffaudio-iOS`, `ffaudio-Android`. `pack` downloads all five,
+lays them out under `native/artifacts/` and packs the payload packages from
+them, so a package carries the exact binary its row tested rather than a
+rebuild.
 
 ## Debugging
 
@@ -702,7 +723,8 @@ and one whose licence question throws.
 
 `full` has never been built for a phone: its configure line was verified by
 configuring FFmpeg 7.1.1 with it on macOS — 201 audio decoders, 350 demuxers,
-`CONFIG_GPL 0` — and no slice or ABI has been linked from it. The DSD
+`CONFIG_GPL 0` — and no slice or ABI has been linked from it. It has not been
+configured against 9.0.2 at all, so those counts are 7.1.1's. The DSD
 decoders new to `slim` are in the same position: `dsf` had been in the demuxer
 list with no `dsd_*` decoder behind it since the list was written, so a `.dsf`
 demuxed and then failed to find a decoder, and the fix is a configure line
@@ -719,10 +741,10 @@ argument the publish job makes for pushing pack's exact bytes. A payload
 package that packs nothing is the failure this invites, so each one names a
 file that must exist and stops the build if it does not.
 
-Verified end to end for macOS only: a scratch console app referencing
-`FFAudio.NET` and `FFAudio.NET.macOS` from a folder feed decodes a FLAC with
-no other setup. The mobile two have been packed and their layout checked, but
-no phone project has consumed one — that is the first thing to do with them.
+The "Test package" job consumes all six packages from a folder feed on every
+run, on all five platforms, with no `native/artifacts/` for the resolver to
+fall back on. Before it existed, only macOS and iOS had been verified this
+way.
 
 Nothing is published to NuGet yet: the workflow and the versioning are in
 place, but no `v*` tag has been cut yet.
