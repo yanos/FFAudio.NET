@@ -82,6 +82,12 @@ public static class DecodeChecks
                     () => HighFidelityAudioIsPreserved(fixture)));
             }
 
+            foreach (var fixture in BundledFormatFixtures.All.Where(fixture => fixture.SampleRate != 48000))
+            {
+                results.Add(Run($"{fixture.Codec} resampled to 48kHz keeps its pitch and length",
+                    () => ResampledAudioStaysInTune(fixture)));
+            }
+
             results.Add(Run("the binary reports its FFmpeg version and license", FfmpegIdentityIsReported));
             results.Add(Run("the FFmpeg configuration is returned whole", FfmpegConfigurationIsWhole));
             results.Add(Run("the redistribution flag matches the FFmpeg license", RedistributionFlagMatchesLicense));
@@ -703,6 +709,54 @@ public static class DecodeChecks
             $"decoded 24-bit PCM differs from the {expected.Length / 6}-frame reference");
 
         return $"{actual.Length / 6} stereo frames, bit exact";
+    }
+
+    // Resampling from 44.1kHz is what most music libraries need. The ramp
+    // check above only counts frames, so this also checks the pitch.
+    private static string ResampledAudioStaysInTune(BundledFormatFixture fixture)
+    {
+        const int target = 48000;
+
+        using var nativeSource = BundledFormatFixtures.Open(fixture.FileName);
+        using var native = Decoder.OpenStream(nativeSource, SampleFormat.S16);
+        var nativePcm = DecodeAll(native);
+        var nativeFrames = nativePcm.Length / 2;
+        var nativePitch = ZeroCrossingPitch(nativePcm, fixture.SampleRate);
+
+        using var source = BundledFormatFixtures.Open(fixture.FileName);
+        using var decoder = Decoder.OpenStream(source, SampleFormat.S16, target);
+        Expect(decoder.Format.SampleRate == target, $"sample rate {decoder.Format.SampleRate}, wanted {target}");
+        Expect(decoder.Format.SourceSampleRate == fixture.SampleRate,
+            $"source sample rate {decoder.Format.SourceSampleRate}, wanted {fixture.SampleRate}");
+
+        var pcm = DecodeAll(decoder);
+        var frames = pcm.Length / 2;
+        var pitch = ZeroCrossingPitch(pcm, target);
+
+        // Allow for implementation-specific resampler delay.
+        var wanted = (long)nativeFrames * target / fixture.SampleRate;
+        Expect(Math.Abs(frames - wanted) <= 64, $"{frames} frames, wanted about {wanted}");
+        Expect(nativePitch > 100, $"the fixture decoded to {nativePitch:F0}Hz, not a tone");
+        Expect(Math.Abs(pitch - nativePitch) <= nativePitch * 0.01,
+            $"{pitch:F0}Hz at {target}Hz, {nativePitch:F0}Hz at {fixture.SampleRate}Hz");
+
+        return $"{fixture.SampleRate}Hz to {target}Hz, {frames} frames, {pitch:F0}Hz";
+    }
+
+    // Mono S16 fixtures only.
+    private static double ZeroCrossingPitch(byte[] pcm, int sampleRate)
+    {
+        var frames = pcm.Length / 2;
+        var crossings = 0;
+        for (var i = 1; i < frames; i++)
+        {
+            var previous = BitConverter.ToInt16(pcm, (i - 1) * 2);
+            var current = BitConverter.ToInt16(pcm, i * 2);
+            if ((previous < 0) != (current < 0))
+                crossings++;
+        }
+
+        return crossings / 2.0 / ((double)frames / sampleRate);
     }
 
     private static string FfmpegIdentityIsReported()
