@@ -43,7 +43,10 @@ public static class DecodeChecks
     {
         var results = new List<CheckResult>();
 
-        var directory = Path.Combine(Path.GetTempPath(), "ffaudio-checks");
+        // A folder of its own per run: dotnet test runs each target framework
+        // in a separate process at the same time, and a shared folder had one
+        // run deleting it while the other was still writing into it.
+        var directory = Path.Combine(Path.GetTempPath(), "ffaudio-checks-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(directory);
 
         try
