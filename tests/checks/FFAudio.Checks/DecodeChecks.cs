@@ -727,12 +727,13 @@ public static class DecodeChecks
     // a WavPack file with a trailing APE tag.
     private static string UnseekableFixtureMatchesSeekable(BundledFormatFixture fixture)
     {
+        var encoded = StreamingFixtureBytes(fixture);
         byte[] expected;
-        using (var seekableSource = BundledFormatFixtures.Open(fixture.FileName))
+        using (var seekableSource = new MemoryStream(encoded, writable: false))
         using (var seekable = Decoder.OpenStream(seekableSource, SampleFormat.S24))
             expected = DecodeAll(seekable);
 
-        using var forward = new ForwardOnlyStream(BundledFormatFixtures.Open(fixture.FileName));
+        using var forward = new ForwardOnlyStream(new MemoryStream(encoded, writable: false));
         // Real forward-only sources normally arrive with a container/content
         // type. Supplying it also avoids old demuxers trying to rewind a tiny
         // stream after probing beyond its end.
@@ -742,6 +743,38 @@ public static class DecodeChecks
         Expect(pcm.Length == expected.Length, $"{pcm.Length} bytes, wanted {expected.Length}");
         Expect(pcm.AsSpan().SequenceEqual(expected), "the unseekable stream decoded differently");
         return $"{pcm.Length} bytes, identical";
+    }
+
+    private static byte[] StreamingFixtureBytes(BundledFormatFixture fixture)
+    {
+        using var source = BundledFormatFixtures.Open(fixture.FileName);
+        using var copy = new MemoryStream();
+        source.CopyTo(copy);
+        var encoded = copy.ToArray();
+
+        if (fixture.Codec != "mp3")
+            return encoded;
+
+        // The MP3 fixture is deliberately tiny. Ubuntu's FFmpeg 6 demuxer
+        // reaches EOF while looking ahead and then tries to rewind the pipe.
+        // Repeat its complete audio-frame sequence so this check represents a
+        // streaming track while the original remains the metadata fixture.
+        Expect(encoded.Length >= 10 && encoded.AsSpan(0, 3).SequenceEqual("ID3"u8),
+            "tagged.mp3 has no ID3v2 header");
+        var tagBytes = 10
+            + ((encoded[6] & 0x7F) << 21)
+            + ((encoded[7] & 0x7F) << 14)
+            + ((encoded[8] & 0x7F) << 7)
+            + (encoded[9] & 0x7F);
+        Expect(tagBytes < encoded.Length, "tagged.mp3 has no audio frames");
+
+        const int repeats = 64;
+        var frames = encoded.AsSpan(tagBytes);
+        var streaming = new byte[tagBytes + frames.Length * repeats];
+        encoded.AsSpan(0, tagBytes).CopyTo(streaming);
+        for (var i = 0; i < repeats; i++)
+            frames.CopyTo(streaming.AsSpan(tagBytes + i * frames.Length));
+        return streaming;
     }
 
     // The tag is accepted only where the audio ends, so bytes between the
