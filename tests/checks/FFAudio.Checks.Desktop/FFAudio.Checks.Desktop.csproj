@@ -1,17 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
-  <!-- The same checks the phones run, on whichever desktop is running it.
-       macOS, Linux and Windows in one project, because on a desktop "the
-       platform" is a runtime concern and not a build one - there is nothing
-       here for a target framework to differ about.
-
-       It overlaps FFAudio.Tests deliberately: DeviceChecksTests already runs
-       RunAll under xUnit on all three. What that cannot answer is whether an
-       ordinary application - a console app with a PackageReference and a
-       Main - can use this library, because a test host restores, resolves and
-       loads differently from an app. Something an app does and a test does
-       not is exactly the class of thing that has bitten this library twice on
-       iOS. -->
+  <!-- Console host for the shared checks and an ordinary application load context. -->
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
@@ -25,12 +14,7 @@
     <ProjectReference Include="../FFAudio.Checks/FFAudio.Checks.csproj" />
   </ItemGroup>
 
-  <!-- With $(FFAudioPackageVersion) set, the native comes from this desktop's
-       payload package instead of the tree, the way it reaches a consumer: the
-       package puts it under runtimes/<rid>/native/, the host copies it out,
-       and Native.Resolve finds it by name. Only this machine's package,
-       because the other two carry nothing this machine could load, and
-       restoring a package this run cannot exercise proves nothing about it. -->
+  <!-- In package mode, restore only the native payload for this host OS. -->
   <ItemGroup Condition="'$(FFAudioPackageVersion)' != '' And $([MSBuild]::IsOSPlatform('Linux'))">
     <PackageReference Include="FFAudio.NET.Linux" Version="$(FFAudioPackageVersion)" />
   </ItemGroup>

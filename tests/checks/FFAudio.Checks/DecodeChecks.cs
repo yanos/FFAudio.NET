@@ -8,31 +8,8 @@ using Microsoft.Extensions.Logging;
 
 namespace FFAudio.Checks;
 
-// Does this platform actually turn a file into the right samples?
-//
-// FFAudio.Tests answers that on a desktop, thoroughly, with xUnit. This
-// answers a smaller version of it anywhere - including inside an app on a
-// phone, where there is no test host to run xUnit in and where the parts most
-// likely to be broken are the parts a desktop never exercises:
-//
-//  - Native.Resolve's iOS branch, which loads the façade by hand out of
-//    Frameworks/ffaudio.framework because .NET-for-iOS resolves a P/Invoke by
-//    dlopen-ing the DllImport string and that matches nothing there. It is
-//    registered from a [ModuleInitializer] rather than a static constructor
-//    because Mono resolves the library for a P/Invoke stub *before* running
-//    the declaring type's cctor - so the resolver was once registered by the
-//    very call that had already failed. Nothing but a launch finds that.
-//  - the read and seek trampolines OpenStream hands to FFmpeg, under full
-//    AOT rather than the JIT every desktop run uses.
-//  - libffaudio.so loading out of an APK, for whichever ABI this hardware is.
-//
-// A cross-compile catches none of the three: they are all green at link time
-// and all fatal at launch.
-//
-// It answers the metadata half too - tags, cover art, layout, codec names -
-// because a phone is where a caller most wants them and where the least of
-// the library has ever been run. A build that decodes perfectly and returns
-// no title is broken for anything that draws a track list.
+// Cross-platform runtime checks for native loading, AOT callbacks, decoding,
+// seeking, and metadata. These run inside mobile apps without an xUnit host.
 public static class DecodeChecks
 {
     private const int Rate = 96000;
@@ -43,9 +20,7 @@ public static class DecodeChecks
     {
         var results = new List<CheckResult>();
 
-        // A folder of its own per run: dotnet test runs each target framework
-        // in a separate process at the same time, and a shared folder had one
-        // run deleting it while the other was still writing into it.
+        // Isolate concurrent target-framework runs.
         var directory = Path.Combine(Path.GetTempPath(), "ffaudio-checks-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(directory);
 
@@ -54,9 +29,7 @@ public static class DecodeChecks
             var path = SyntheticHiResWav.CreateFile(
                 directory, "hires.wav", Rate, Frames, SyntheticHiResWav.Ramp24());
 
-            // Keep this list in the same order as the desktop suite. The
-            // mobile heads cannot run xUnit, but they must exercise every
-            // behaviour a desktop build does rather than a smaller proxy.
+            // Keep output stable and comparable across runners.
             results.Add(Run("the native library matches the expected ABI", () => NativeLibraryMatchesAbi(path)));
             results.Add(Run("the decoder says it is available", DecoderIsAvailable));
             results.Add(Run("a 24-bit source arrives with every bit", () => EveryBitSurvives(path)));
@@ -110,17 +83,14 @@ public static class DecodeChecks
             }
             catch (IOException)
             {
-                // A phone's temp directory surviving a run is not a finding.
+                // Cleanup failure does not invalidate completed checks.
             }
         }
 
         return results;
     }
 
-    // The claim the whole library rests on. The fixture is a 24-bit ramp whose
-    // low byte changes every frame, so a decoder that narrowed to 16 bits
-    // anywhere is wrong at almost every frame rather than at a few - the loss
-    // is only invisible when the fixture had nothing down there to lose.
+    // The ramp changes its low byte every frame to expose 16-bit truncation.
     private static string EveryBitSurvives(string path)
     {
         using var decoder = Decoder.OpenPath(path, SampleFormat.S24);
@@ -151,10 +121,7 @@ public static class DecodeChecks
         return $"ABI {decoder.Format.SampleFormat}";
     }
 
-    // The question a caller asks before offering playback at all, and the one
-    // place a missing or mismatched native is meant to be a false rather than
-    // an exception. On a platform where everything else here passes it has to
-    // say true - a false here would have an app hide a player that works.
+    // Availability should report a compatible native without throwing.
     private static string DecoderIsAvailable()
     {
         Expect(Decoder.IsAvailable, "Decoder.IsAvailable is false with a working native present");
@@ -262,11 +229,7 @@ public static class DecodeChecks
         return $"{decoder.Format.SourceSampleRate}Hz source, {decoder.Format.SampleRate}Hz output";
     }
 
-    // OpenStream hands FFmpeg two function pointers into managed code. Under
-    // the JIT that is unremarkable; under full AOT the trampolines are
-    // compiled ahead of time and a mistake there is a crash at the first
-    // callback, not a compile error. Comparing against the path decode means
-    // a stream that opens but reads the wrong bytes is caught too.
+    // Exercise managed callbacks under both JIT and full AOT.
     private static string StreamMatchesPath(string path)
     {
         byte[] fromPath;
@@ -289,10 +252,7 @@ public static class DecodeChecks
         return $"{fromPath.Length} bytes, identical";
     }
 
-    // The seek callback's other answer. A stream that cannot seek reports its
-    // size as unknown and refuses every seek, which is what a live HTTP body
-    // looks like - and it is the path where returning the wrong thing from a
-    // trampoline hangs rather than throws.
+    // Model a live body with unknown length and no seeking.
     private static string UnseekableStreamDecodes(string path)
     {
         byte[] expected;
@@ -310,10 +270,7 @@ public static class DecodeChecks
         return $"{pcm.Length} bytes, identical";
     }
 
-    // Seek returns where decode actually resumed, which is at or before the
-    // request because the demuxer is keyframe-bound. A caller that reports the
-    // request instead ends up with a scrubber permanently offset from the
-    // audio.
+    // Seek reports the demuxer's actual landing position.
     private static string SeekLandsWhereItSays(string path)
     {
         using var decoder = Decoder.OpenPath(path, SampleFormat.S24);
@@ -331,9 +288,7 @@ public static class DecodeChecks
         return $"asked {asked.TotalMilliseconds:F0}ms, landed {landed.TotalMilliseconds:F0}ms, {remaining} frames remain";
     }
 
-    // Asking for a rate the source is not. swresample is a separate FFmpeg
-    // library from the demuxer and the decoder, so it is a separate thing for
-    // a cross-compiled build to have got wrong.
+    // Exercise the separately linked swresample path.
     private static string ResamplingIsRight(string path)
     {
         const int target = 48000;
@@ -347,9 +302,7 @@ public static class DecodeChecks
         var pcm = DecodeAll(decoder);
         var frames = pcm.Length / decoder.Format.BytesPerFrame;
 
-        // Halving the rate halves the frames, give or take the resampler's
-        // own filter delay. A tolerance rather than an equality because that
-        // delay is an implementation detail; an order of magnitude out is not.
+        // Allow for implementation-specific resampler delay.
         var wanted = Frames * target / Rate;
         Expect(Math.Abs(frames - wanted) <= 64, $"{frames} frames, wanted about {wanted}");
 
@@ -411,9 +364,7 @@ public static class DecodeChecks
         }
         catch (DecodeException exception)
         {
-            // FFmpeg's own AVERROR, negative, rather than a code this library
-            // made up: a caller who wants to branch on why an open failed
-            // compares against the same numbers FFmpeg documents.
+            // Preserve FFmpeg's documented AVERROR value.
             Expect(exception.Code < 0, $"error code was {exception.Code}, wanted an AVERROR");
             return $"DecodeException {exception.Code}";
         }
@@ -454,17 +405,7 @@ public static class DecodeChecks
         }
         catch (DecodeException exception)
         {
-            // Both spellings of the same errno. The text is libc's rather than
-            // FFmpeg's - av_strerror hands EIO straight to strerror - so it is
-            // the platform's C library that decides the wording, not the
-            // platform's family: glibc says "Input/output error", while
-            // Bionic and the Windows CRT both say "I/O error". Keying this on
-            // IsWindows was a guess that held until the first Android run.
-            //
-            // Still asserted rather than dropped: the claim worth keeping is
-            // that a mid-stream failure arrives as a DecodeException a person
-            // can read, and an empty or generic message would fail that. What
-            // is not worth asserting is which libc the phone shipped.
+            // strerror uses either common EIO spelling depending on the C runtime.
             Expect(exception.Message.Contains("I/O error", StringComparison.OrdinalIgnoreCase)
                     || exception.Message.Contains("Input/output error", StringComparison.OrdinalIgnoreCase),
                 $"stream failure was {Quote(exception.Message)}");
@@ -476,9 +417,7 @@ public static class DecodeChecks
         throw new CheckFailedException("a failing stream ended without DecodeException");
     }
 
-    // A named demuxer, used rather than probed for. The hint's value is a
-    // stream that starts somewhere a probe would misjudge; the check is only
-    // that naming the right one changes nothing about what comes out.
+    // A correct demuxer hint must preserve decoded output.
     private static string RightHintOpens(string path)
     {
         byte[] expected;
@@ -496,10 +435,7 @@ public static class DecodeChecks
         return $"{pcm.Length} bytes, identical";
     }
 
-    // A catalog that says FLAC about a WAV. The forced open fails, the stream
-    // is rewound and probed, and the track plays - but the mislabel is still a
-    // fact about the caller's data, and the warning is the only place it
-    // surfaces. Both halves are the contract: it opens, and it says so.
+    // A wrong hint should fall back to probing and produce a warning.
     private static string WrongHintFallsBack(string path)
     {
         byte[] expected;
@@ -520,9 +456,7 @@ public static class DecodeChecks
         return warnings[0].Message;
     }
 
-    // The same mislabel with no logger at all, which is the default and the
-    // commonest call. The warning has nowhere to go, and the fallback must not
-    // care: it opens and decodes exactly as it does when someone is listening.
+    // Logging is optional and must not affect hint fallback.
     private static string WrongHintWithoutLogger(string path)
     {
         byte[] expected;
@@ -538,10 +472,7 @@ public static class DecodeChecks
         return $"{pcm.Length} bytes";
     }
 
-    // ownsStream is who closes the Stream, and both answers are promises: a
-    // decoder that owns it closes it on Dispose, one that does not leaves it
-    // open for a caller that still wants it - to retry, to rewind, to hand to
-    // the next track.
+    // Verify both sides of the ownsStream contract.
     private static string OwnedStreamIsClosed(string path)
     {
         var bytes = File.ReadAllBytes(path);
@@ -557,9 +488,7 @@ public static class DecodeChecks
         return "owned closed, borrowed open";
     }
 
-    // The half of ownership nobody tests: an open that throws never returns a
-    // decoder to Dispose, so if it does not close an owned stream itself,
-    // nothing ever will.
+    // Failed opens must close owned streams without a Decoder to dispose.
     private static string FailedOpenClosesOwnedStream(string directory)
     {
         var owned = new MemoryStream(System.Text.Encoding.ASCII.GetBytes("this is not audio, whatever it claims"));
@@ -576,11 +505,7 @@ public static class DecodeChecks
         throw new CheckFailedException("a non-audio stream opened successfully");
     }
 
-    // Tags are read off the format context rather than the packet stream, so
-    // this is a question about the file and not a decode - but the marshalling
-    // beneath it is a two-call dance (count, then each by index) with a
-    // grow-and-retry buffer, and that is AOT-sensitive in a way a struct read
-    // is not.
+    // Exercise indexed tag marshalling and grow-and-retry buffers under AOT.
     private static string TagsComeBack(string path)
     {
         using var decoder = Decoder.OpenPath(path, SampleFormat.S16);
@@ -598,9 +523,7 @@ public static class DecodeChecks
         return $"{tags.Count} tags, title {Quote(SyntheticTaggedAiff.Title)}";
     }
 
-    // The bytes, unaltered. Cover art is the one call that hands back an
-    // arbitrary-sized buffer the caller did not size, so a length mismatch
-    // here is the marshalling and not the image.
+    // Cover art must survive variable-length buffer marshalling unchanged.
     private static string CoverArtComesBack(string path)
     {
         using var decoder = Decoder.OpenPath(path, SampleFormat.S16);
@@ -617,13 +540,7 @@ public static class DecodeChecks
             Expect(art.Bytes[i] == expected[i], $"art byte {i} differs: {art.Bytes[i]} vs {expected[i]}");
         }
 
-        // The dimensions matter most on exactly the builds this check runs on.
-        // A phone links an audio-only FFmpeg, which has no decoder that could
-        // work out a picture's size, so these come from the façade reading the
-        // PNG header itself - and a zero here means that parse silently
-        // stopped happening, which is also what would bring back the
-        // "Could not find codec parameters ... unspecified size" noise on
-        // every art-bearing file the app opens.
+        // Mobile audio-only builds obtain these values from the PNG header.
         Expect(art.Width == 1 && art.Height == 1,
             $"art is {art.Width}x{art.Height}, wanted 1x1");
 
@@ -806,10 +723,7 @@ public static class DecodeChecks
         }
         catch (Exception failed)
         {
-            // Every exception, not just CheckFailedException: a
-            // DllNotFoundException or a marshalling crash is exactly the
-            // finding this suite exists for, and it must be reported as a
-            // failed check rather than take the whole run down.
+            // Report loading and marshalling exceptions as individual failures.
             return new CheckResult(name, Passed: false, failed.ToString(), clock.Elapsed);
         }
     }
@@ -817,9 +731,7 @@ public static class DecodeChecks
     private static CheckResult Run(string name, Action check) =>
         Run(name, () => { check(); return string.Empty; });
 
-    // A stream that reports no length and refuses to seek, wrapping one that
-    // can do both. What a decoder sees when the bytes are arriving from
-    // somewhere rather than sitting on a disk.
+    // Wrap a seekable source as a forward-only stream with unknown length.
     private sealed class ForwardOnlyStream(Stream inner) : Stream
     {
         public override bool CanRead => true;

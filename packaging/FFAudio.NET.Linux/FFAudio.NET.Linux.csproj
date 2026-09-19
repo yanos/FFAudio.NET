@@ -6,11 +6,7 @@
     <PayloadProbe>$(MSBuildThisFileDirectory)../../native/artifacts/linux/libffaudio.so</PayloadProbe>
   </PropertyGroup>
 
-  <!-- Links against the distribution's own FFmpeg rather than carrying one,
-       so this package is the façade alone - a few tens of kilobytes - and the
-       machine it runs on supplies libavformat and friends. That is also what
-       keeps the LGPL uncomplicated here: the FFmpeg stays replaceable because
-       it was never ours. -->
+  <!-- The release artifact embeds the repository-built LGPL FFmpeg. -->
   <ItemGroup>
     <None Include="../../native/artifacts/linux/libffaudio.so"
           Pack="true" PackagePath="runtimes/linux-x64/native/" />

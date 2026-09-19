@@ -1,17 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
-  <!-- The checks a phone can run. Same question as FFAudio.Tests asks - does
-       this platform turn a file into the right samples? - answered on the
-       platform in question rather than on a developer's Mac.
-
-       It carries no test framework on purpose. xUnit needs a host process to
-       discover and run it, and on iOS and Android there is no such host: what
-       runs there is an app. So a check is a method that throws, a runner is a
-       loop, and the two heads beside this project are the smallest apps that
-       can call RunAll and write down what came back.
-
-       Nothing here plays audio, opens a socket or draws anything. Every
-       dependency this does not have is one that cannot explain a failure. -->
+  <!-- Runtime checks shared by desktop, iOS, and Android runners. -->
 
   <PropertyGroup>
     <TargetFrameworks>net8.0;net10.0</TargetFrameworks>
@@ -19,17 +8,7 @@
     <IsPackable>false</IsPackable>
   </PropertyGroup>
 
-  <!-- The binding, from the tree or from a package. $(FFAudioPackageVersion)
-       is what a consumer's build actually looks like, and the whole point of
-       running the checks that way is that a package is not a project: restore
-       resolves it, a .targets file inside it gets a say in the build, and the
-       native arrives by whatever route that package chose. None of that is
-       exercised by a ProjectReference, and all of it is what a consumer hits
-       first.
-
-       This project is the shared library in that arrangement rather than the
-       app - the heads beside it reference this - which is the shape
-       buildTransitive exists for. -->
+  <!-- Select either the source project or the consumer-facing package. -->
   <ItemGroup Condition="'$(FFAudioPackageVersion)' == ''">
     <ProjectReference Include="../../../src/FFAudio.NET/FFAudio.NET.csproj" />
   </ItemGroup>

@@ -1,21 +1,10 @@
 <Project>
 
-  <!-- The root one first, or these projects get no MinVer and therefore no
-       version: the SDK stops at the nearest Directory.Build.props it finds. -->
+  <!-- Preserve the repository-wide MinVer settings. -->
   <Import Project="../Directory.Build.props" />
 
-  <!-- What the five per-platform native packages have in common, which is
-       almost everything. Each one is a payload and no code at all: the
-       decoder is a .dylib, a .so, a .dll or a .framework, and the managed
-       binding that P/Invokes into it lives in FFAudio.NET, which none of
-       these depend on. That is deliberate - a consumer references the binding
-       plus whichever payloads their app actually ships, and a Windows FFmpeg
-       is ~70MB where an iOS slice is 1.9MB.
-
-       netstandard2.0 because it has to be something and nothing here is
-       compiled. The assets are resolved by RID (desktop) or injected by a
-       .targets file (mobile), neither of which cares what the package's own
-       framework says. -->
+  <!-- Shared settings for native-only payload packages. netstandard2.0 keeps
+       them installable without implying a managed assembly is included. -->
   <PropertyGroup>
     <TargetFramework>netstandard2.0</TargetFramework>
     <IncludeBuildOutput>false</IncludeBuildOutput>
@@ -24,9 +13,7 @@
     <GeneratePackageOnBuild>false</GeneratePackageOnBuild>
     <IsPackable>true</IsPackable>
 
-    <!-- NU5128: no lib/ folder. NU5100/NU5118: binaries somewhere other than
-         lib/. All three are NuGet telling us this is not an ordinary library
-         package, which is correct and is the point. -->
+    <!-- Suppress warnings expected for native-only packages without lib/. -->
     <NoWarn>$(NoWarn);NU5128;NU5100;NU5118</NoWarn>
 
     <Authors>yanos</Authors>
@@ -39,16 +26,11 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- The licence terms travel with the binary that is under them. These
-         packages are the only artifacts that actually contain FFmpeg. -->
+    <!-- Include license notices with FFmpeg-bearing payloads. -->
     <None Include="../../NOTICE" Pack="true" PackagePath="/" />
   </ItemGroup>
 
-  <!-- A payload package with no payload is the failure this phase is most
-       likely to produce: the natives are built by scripts CI runs in other
-       jobs, and a missing download would otherwise pack an empty package and
-       publish it. Each project sets $(PayloadProbe) to one file that must
-       exist. -->
+  <!-- Prevent publishing a package when its separately built payload is missing. -->
   <Target Name="EnsurePayloadExists" BeforeTargets="GenerateNuspec"
           Condition="'$(PayloadProbe)' != ''">
     <Error Condition="!Exists('$(PayloadProbe)')"

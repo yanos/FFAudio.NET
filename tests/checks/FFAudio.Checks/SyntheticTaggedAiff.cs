@@ -6,36 +6,15 @@ using System.Text;
 
 namespace FFAudio.Checks;
 
-// A small AIFF carrying an ID3v2 tag, which is to say: a real file with real
-// metadata, built without an encoder.
-//
-// Phase 3 of the plan adds tags, cover art, channel layout and codec names,
-// and every one of those needs a fixture that actually has them - a WAV of
-// synthetic PCM proves none of it. The obvious way to get one is to shell out
-// to the ffmpeg binary, and that is exactly what this file exists to avoid:
-// the Linux CI job installs libavformat-dev and no binary at all, so a fixture
-// generated that way would quietly skip on the platform most likely to differ.
-//
-// AIFF is the container that makes it possible. Its audio is raw big-endian
-// PCM, so the samples are just written; and libavformat's aiffdec reads an
-// "ID3 " chunk with the same parser it uses on an MP3, so a hand-built ID3v2.3
-// tag gets flattened into the same metadata dictionary and the same
-// ATTACHED_PIC stream that a tagged MP3 would produce. What is under test is
-// the façade's reading of those, not FFmpeg's parsing of them, so a fixture
-// that reaches the same structures by a simpler road is worth more than a
-// realistic one nobody can build everywhere.
-//
-// It lives beside the checks rather than in the test project because a phone
-// needs it too: the metadata checks run there, and "no encoder anywhere" is
-// even truer on a device than it is in CI.
+// Builds a tagged AIFF fixture without requiring an encoder. FFmpeg maps its
+// ID3v2.3 chunk to the same metadata and attached-picture structures as MP3.
 public static class SyntheticTaggedAiff
 {
     public const string Title = "A quiet ramp";
     public const string Artist = "The Fixture";
     public const string Album = "Synthetic Hi-Res";
 
-    // A 1x1 red PNG. Small because the assertion is that the bytes come back
-    // exactly, and a byte-for-byte comparison does not get truer with size.
+    // A minimal 1x1 red PNG for byte-for-byte comparison.
     public static byte[] CoverPng() => Convert.FromBase64String(
         "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC");
 
@@ -85,10 +64,7 @@ public static class SyntheticTaggedAiff
         return file.ToArray();
     }
 
-    // IFF chunks are word-aligned: an odd-length chunk is followed by a pad
-    // byte that its own length does not count. Getting this wrong shifts
-    // every chunk after it, and the demuxer reports a corrupt file rather
-    // than a misaligned one.
+    // IFF pads odd chunks to word boundaries without counting the pad in length.
     private static void WriteChunk(Stream stream, string id, byte[] content)
     {
         stream.Write(Encoding.ASCII.GetBytes(id));
@@ -137,9 +113,7 @@ public static class SyntheticTaggedAiff
         WriteFrame(stream, "APIC", content.ToArray());
     }
 
-    // A v2.3 frame size is a plain big-endian int. Only the tag header's own
-    // size is syncsafe, which is the detail that makes hand-built ID3 tags
-    // fail to parse.
+    // ID3v2.3 frame sizes are plain big-endian; only the tag size is syncsafe.
     private static void WriteFrame(Stream stream, string id, byte[] content)
     {
         stream.Write(Encoding.ASCII.GetBytes(id));
@@ -157,9 +131,7 @@ public static class SyntheticTaggedAiff
         (byte)(value & 0x7F),
     ];
 
-    // AIFF stores its sample rate as an 80-bit IEEE extended float, which is
-    // the one part of the format that is not obvious. The integer bit is
-    // explicit here, unlike in the 32- and 64-bit forms.
+    // AIFF uses an 80-bit extended float with an explicit integer bit.
     private static byte[] Extended80(int value)
     {
         var bytes = new byte[10];

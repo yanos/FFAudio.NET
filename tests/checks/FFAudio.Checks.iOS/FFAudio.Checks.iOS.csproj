@@ -1,14 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
-  <!-- A check runner, not an app. It launches, runs FFAudio.Checks against
-       the real iOS runtime, prints one line per check and a final tally, and
-       leaves the same text on screen so a run on a physical device is
-       readable without a cable. tests/checks/FFAudio.Checks.iOS/run.sh drives it on a
-       simulator and turns the tally into an exit code.
-
-       No UI framework beyond a UITextView and nothing that plays audio: what
-       is under test is decoding, and every dependency this does not have is
-       one that cannot explain a failure. -->
+  <!-- Minimal iOS host for the shared runtime checks. -->
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
@@ -20,18 +12,12 @@
     <ApplicationId>com.yanos.ffaudio.checks</ApplicationId>
     <ApplicationVersion>1</ApplicationVersion>
 
-    <!-- Simulator by default: this is run from a script far more often than
-         from a device, and a simulator build needs no signing. A device run
-         is `-r ios-arm64`, which is also the only configuration where the
-         AOT-compiled trampolines are the ones a shipped app would use. -->
+    <!-- Default to an unsigned simulator build; use ios-arm64 for devices. -->
     <RuntimeIdentifier Condition="'$(RuntimeIdentifier)' == ''">iossimulator-arm64</RuntimeIdentifier>
     <ProvisioningType Condition="'$(RuntimeIdentifier)' == 'ios-arm64'">automatic</ProvisioningType>
     <ProvisioningType Condition="'$(RuntimeIdentifier)' != 'ios-arm64'">manual</ProvisioningType>
 
-    <!-- UIWindow is obsolete from iOS 26 in favour of UIWindowScene, which
-         wants a scene manifest and a delegate this runner has no use for.
-         What is under test is decoding; the window exists so a person holding
-         a phone can read the tally. -->
+    <!-- This minimal runner intentionally retains UIWindow instead of scenes. -->
     <NoWarn>$(NoWarn);CA1422</NoWarn>
   </PropertyGroup>
 
@@ -39,20 +25,7 @@
     <ProjectReference Include="..\FFAudio.Checks\FFAudio.Checks.csproj" />
   </ItemGroup>
 
-  <!-- The façade, embedded as a framework. This is the whole reason an iOS
-       run checks anything: without it Native.Resolve finds nothing, the first
-       check fails and the rest are not attempted.
-
-       Two slices because they are not interchangeable - a simulator binary
-       will not load on a device and the reverse is worse, since it links.
-       Built by native/ios/build.sh into native/artifacts/ios/.
-
-       With $(FFAudioPackageVersion) set, none of this is declared and
-       FFAudio.NET.iOS brings the same two slices instead - its buildTransitive
-       .targets picks the slice off the RuntimeIdentifier exactly as the two
-       conditions below do. Declaring both would be two ffaudio.frameworks in
-       one app, which is either a duplicate-symbol failure or, worse, the wrong
-       one silently winning. -->
+  <!-- Use the tree framework directly, or let the platform package inject it. -->
   <ItemGroup Condition="'$(FFAudioPackageVersion)' != ''">
     <PackageReference Include="FFAudio.NET.iOS" Version="$(FFAudioPackageVersion)" />
   </ItemGroup>

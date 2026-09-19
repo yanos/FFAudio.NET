@@ -6,9 +6,7 @@
     <PayloadProbe>$(MSBuildThisFileDirectory)../../native/artifacts/android/arm64-v8a/libffaudio.so</PayloadProbe>
   </PropertyGroup>
 
-  <!-- android21.0 is what the .so files were compiled against, and NuGet
-       refuses a build folder with no platform version at all. A project with a
-       higher minSdk consumes it. -->
+  <!-- Match the native API level; projects with higher minSdk remain compatible. -->
   <ItemGroup>
     <None Include="buildTransitive/FFAudio.NET.Android.targets"
           Pack="true" PackagePath="buildTransitive/net10.0-android21.0/" />

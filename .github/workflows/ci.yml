@@ -1,25 +1,7 @@
 name: CI
 
-# One workflow rather than two, because `needs:` and artifacts only reach
-# across jobs of the same run. A separate Publish workflow firing on the same
-# tag push cannot depend on this one's tests or download what it built - it can
-# only repeat them and hope the second answer matches the first. Chained here,
-# the package that reaches nuget.org is the exact file a green run produced.
-#
-#     push / PR       test on three desktops, run the same checks on an iOS
-#                     simulator and an Android emulator, then pack behind all five
-#     push of v*      the same, and then publish what was packed
-#
-# A version is a decision, and `git tag v1.2.3` followed by pushing the tag is
-# where it gets made. MinVer turns the tag into the package version, so there
-# is no file to edit and nothing that can disagree with the tag:
-#
-#     v1.2.3          an official release
-#     v1.2.3-rc.1     a pre-release, and NuGet shows it as one
-#
-# Neither form is special-cased below. The difference is entirely MinVer's,
-# read out of the tag, and NuGet's own definition of a pre-release is the
-# hyphen in the version string.
+# Keep build, package verification, and publishing in one artifact chain.
+# Pushing a v* tag supplies the MinVer release version and enables publishing.
 
 on:
   push:
@@ -29,27 +11,7 @@ permissions:
   contents: read
 
 jobs:
-  # Build the façade and run the suite against it, once per platform - three
-  # desktops, an iOS Simulator and an Android emulator, in one matrix.
-  #
-  # There is no "fast suite" to run without a native here, and that is on
-  # purpose: every test in DecoderTests is tagged RequiresNative, because a
-  # decode library whose tests do not decode anything is testing its own
-  # opinions. So the native build is not an optional step that a filter can
-  # route around - if it fails, the job fails, which is the point.
-  #
-  # Five platforms rather than one because the native is a different artifact
-  # on each: pkg-config against a distro FFmpeg on Linux, against Homebrew's
-  # on macOS, a pinned LGPL download linked with MSVC on Windows, and FFmpeg
-  # cross-compiled from source for each phone. Those are five ways for the same
-  # C to stop compiling.
-  #
-  # One matrix rather than a job per family, so a platform is a row and not a
-  # copy of a job. Steps pick their platform off matrix.platform rather than
-  # runner.os, because two rows share a runner image: iOS runs on macOS, and
-  # Android on Linux. matrix.mobile marks the two whose checks run inside an
-  # app on a simulator instead of under dotnet test. Each row names the
-  # artifact it uploads, so what `pack` downloads is unchanged.
+  # Build and exercise each platform-specific native artifact.
   test:
     name: Build and test (${{ matrix.name }})
     strategy:
@@ -86,16 +48,12 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     steps:
-      # Full history, so MinVer sees the tags and commit height it versions
-      # these binaries from. actions/checkout defaults to depth 1, which
-      # silently yields MinVer's 0.0.0-alpha.0 fallback instead.
+      # MinVer requires tags and commit height.
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      # 8.0.x as well as 10.0.x: the library and the tests target both, and
-      # `dotnet test` runs the suite once per framework, which needs the .NET 8
-      # runtime to be there.
+      # Tests target both supported runtimes.
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: |
@@ -106,11 +64,7 @@ jobs:
             src/FFAudio.NET/FFAudio.NET.csproj
             tests/FFAudio.Tests/FFAudio.Tests.csproj
 
-      # --- The desktops ---------------------------------------------------
-
-      # A distro FFmpeg is GPL-enabled, which makes it a development build
-      # only - fine for deciding whether the façade decodes, not for anything
-      # shipped. See NOTICE.
+      # Distro FFmpeg is used only for development-path testing.
       - name: Build ffaudio (Linux)
         if: matrix.platform == 'linux'
         run: |
@@ -124,66 +78,25 @@ jobs:
           brew install ffmpeg
           native/macos/build.sh
 
-      # No cross-compile and nothing to install: the script downloads a pinned
-      # LGPL Windows build of FFmpeg and links against its import libraries,
-      # which is why this is seconds where the mobile equivalents are tens of
-      # minutes.
+      # The script downloads the pinned LGPL Windows build.
       - name: Build ffaudio (Windows)
         if: matrix.platform == 'windows'
         run: ./native/windows/build.ps1
         shell: pwsh
 
-      # The tests find the artifact through Native.Resolve's development walk,
-      # out of native/artifacts/<platform>/ - the same path the step above
-      # wrote it to, and the same one a developer's build-all.sh run uses.
-      # Nothing is copied anywhere for CI's benefit.
-      # Windows alone is held to it, and that is not an oversight. Its FFmpeg
-      # is a pinned LGPL build this repo chose; Linux's and macOS's come from
-      # apt and brew, which ship GPL-enabled FFmpeg and are development
-      # dependencies rather than shipping ones. So this gate is a check that
-      # the pinned Windows asset is still what its name says - a swapped or
-      # renamed release would otherwise be discovered by a lawyer rather than
-      # by a build. See FFmpegBuildTests.
+      # Only the repository-selected Windows build must pass the LGPL gate here.
       - name: Run tests
         if: ${{ !matrix.mobile }}
         run: dotnet test FFAudio.NET.slnx --configuration Release
         env:
           FFAUDIO_REQUIRE_LGPL: ${{ runner.os == 'Windows' && '1' || '' }}
 
-      # The same checks again, this time from an ordinary application instead
-      # of a test host. DeviceChecksTests has already run them under xUnit a
-      # step ago, so this is not about the checks - it is about whether a
-      # console app with a project reference and a Main can use this library
-      # at all. Restore, native resolution and assembly loading all differ
-      # between an app and a test host, and "something an app does that a test
-      # does not" is the shape of both bugs this library has had on iOS.
-      #
-      # Its exit code is its tally, so nothing here has to parse the output.
+      # Exercise an ordinary application load context, not only the test host.
       - name: Run the checks as an app
         if: ${{ !matrix.mobile }}
         run: dotnet run --project tests/checks/FFAudio.Checks.Desktop --configuration Release
 
-      # Everything above builds against the FFmpeg this runner happens to have,
-      # which is the right thing to test and the wrong thing to ship. A dylib
-      # linked against Homebrew records /opt/homebrew/opt/ffmpeg/lib in its own
-      # load commands, and an .so linked against apt's records a soname the
-      # distro owns; copied into a NuGet and restored on a machine without that
-      # exact FFmpeg, neither one loads. That is not hypothetical - it is what
-      # the first real consumer of FFAudio.NET.macOS hit, on a Mac whose FFmpeg
-      # came from MacPorts.
-      #
-      # So the artifact this job uploads is built a second time, statically,
-      # against an LGPL FFmpeg the repo builds itself - and the checks are run
-      # again against *that*, because the binary a package ships should be one
-      # that decoded something. The first build is not wasted: linking the
-      # system FFmpeg is the path every developer uses, and a job that only
-      # built statically would stop compiling it.
-      #
-      # Windows is already in this shape without any of it: its FFmpeg is a
-      # pinned LGPL download whose four DLLs are copied beside the façade and
-      # packed with it, so the payload is self-contained and the libraries stay
-      # replaceable. A static MSVC FFmpeg would be a worse answer to a question
-      # Windows does not have.
+      # Desktop packages use self-contained LGPL builds, not runner-local FFmpeg.
       - name: Cache the static FFmpeg
         if: matrix.platform == 'linux' || matrix.platform == 'macos'
         uses: actions/cache@v4
@@ -193,9 +106,7 @@ jobs:
             native/linux/ffmpeg/prefix
           key: ffmpeg-host-${{ runner.os }}-${{ hashFiles('native/host-ffmpeg.sh', 'native/codec-set.sh') }}
 
-      # FFmpeg's x86 assembly needs an external assembler and configure refuses
-      # to guess one. The macOS runner is arm64, where the toolchain's own
-      # assembler is enough.
+      # FFmpeg's Linux x86 assembly requires nasm.
       - name: Install nasm (Linux)
         if: matrix.platform == 'linux'
         run: sudo apt-get install -y nasm
@@ -208,39 +119,14 @@ jobs:
         if: matrix.platform == 'macos'
         run: native/macos/build.sh --static
 
-      # The same checks, against the binary that is about to be packed - and
-      # this time the licence gate is on. It could not be before: apt's and
-      # brew's FFmpeg are GPL-enabled, which is why only Windows was ever held
-      # to it. A build the repo configured itself has no such excuse, and
-      # asking the binary rather than the build is the whole point of
-      # FFmpegBuild - a configure line does not travel inside a NuGet.
+      # Validate decoding and license metadata on the exact shipping native.
       - name: Run the checks against the shipping native
         if: matrix.platform == 'linux' || matrix.platform == 'macos'
         run: dotnet run --project tests/checks/FFAudio.Checks.Desktop --configuration Release
         env:
           FFAUDIO_REQUIRE_LGPL: 1
 
-      # --- The phones -----------------------------------------------------
-      #
-      # A cross-compile alone would not be worth much here. Three things this
-      # library depends on are green at link time and fatal at launch, and
-      # none of them can fail on a desktop: Native.Resolve's iOS branch
-      # loading the façade by hand out of Frameworks/ffaudio.framework, the
-      # UnmanagedCallersOnly read and seek trampolines OpenStream hands to
-      # FFmpeg being AOT-compiled rather than JITted, and libffaudio.so
-      # loading out of an APK for whichever ABI the hardware is. So these rows
-      # build the native, build a runner app around it, launch it, and read
-      # back the tally it wrote - which is what each runner's run.sh does,
-      # unchanged from how it runs on a developer's Mac.
-      #
-      # The expensive half is FFmpeg itself: build-ffmpeg.sh cross-compiles
-      # it from source, which is tens of minutes across two iOS slices or
-      # three Android ABIs. Both scripts are idempotent - a prefix with a
-      # libavformat.a in it is left alone - so caching the prefix makes every
-      # run after the first just the façade, which is one translation unit.
-      # The key is the script's own hash, because the FFmpeg version and the
-      # decoder list are both in it: change either and the cache misses,
-      # which is exactly right.
+      # Mobile runners verify embedded-native loading and AOT callbacks at runtime.
       - name: Install the mobile workload
         if: matrix.mobile
         run: dotnet workload install ${{ matrix.platform }}
@@ -260,16 +146,12 @@ jobs:
         if: matrix.platform == 'ios'
         run: native/ios/build.sh
 
-      # Builds the runner, installs it on a simulator, launches it and turns
-      # the tally into an exit code. The transcript is printed either way -
-      # a run that produced no tally prints what there was instead, because
-      # "the app wrote nothing" and "six checks failed" are different findings.
+      # Build, install, launch, and report the simulator tally.
       - name: Run the checks (iOS)
         if: matrix.platform == 'ios'
         run: tests/checks/FFAudio.Checks.iOS/run.sh
 
-      # The runner image ships an NDK already; the scripts want it under the
-      # name the NDK's own docs use, which is what a developer machine sets.
+      # Map the runner's NDK path to the standard variable.
       - name: Build FFmpeg (Android)
         if: matrix.platform == 'android'
         run: |
@@ -282,10 +164,7 @@ jobs:
           export ANDROID_NDK_HOME="$ANDROID_NDK_LATEST_HOME"
           native/android/build.sh
 
-      # An x86_64 emulator needs nested virtualisation, and the runner has KVM
-      # but does not hand it to an unprivileged process by default. Without
-      # this the emulator falls back to software rendering of the whole CPU
-      # and times out rather than failing.
+      # Grant the emulator access to KVM acceleration.
       - name: Let the emulator use KVM
         if: matrix.platform == 'android'
         run: |
@@ -294,12 +173,7 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
-      # The action owns the emulator's lifecycle and the script is told to use
-      # it rather than start one of its own - two `emulator` processes
-      # fighting over the same AVD lock is a failure with no useful error.
-      # x86_64 here where a developer's Mac is arm64-v8a, which is the point
-      # of packaging all three ABIs: which one gets exercised is a property of
-      # the hardware, so between the two places these run, two of them do.
+      # Let the action own the emulator; the script reuses its serial.
       - name: Run the checks (Android)
         if: matrix.platform == 'android'
         uses: reactivecircus/android-emulator-runner@v2
@@ -310,34 +184,14 @@ jobs:
           emulator-options: -no-window -no-audio -no-boot-anim -no-snapshot-load -gpu swiftshader_indirect
           script: FFAUDIO_ANDROID_SERIAL=emulator-5554 tests/checks/FFAudio.Checks.Android/run.sh
 
-      # The façade this job just proved decodes, downloadable from the run.
-      #
-      # Nothing downstream consumes these yet: the package carries the
-      # binding and no decoder, so a consumer still supplies their own
-      # libffaudio (FFAUDIO_LIBRARY, or beside their binary - see the README).
-      # Wiring them into a runtimes/<rid>/native/ payload is Phase 6, and this
-      # is the half of it that has to exist first - a built native from each
-      # platform, in one place, at one commit.
-      #
-      # Names must differ per row: upload-artifact v4 refuses a second upload
-      # under a name that already exists in the run, where v3 merged them.
-      # The phones upload the contents of their own folder rather than the
-      # whole of native/artifacts/, which is the shape `pack` lays out.
+      # Upload each verified native under a unique artifact name for packing.
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
           path: ${{ matrix.artifact-path }}
           if-no-files-found: error
 
-  # Packing on every push, not only on a tag. A release that discovers its own
-  # packaging is broken is a release that has to be re-cut, and the version
-  # this produces - MinVer's 0.1.0-alpha.0.<height> for an untagged commit - is
-  # a real pre-release, not a placeholder. The artifact is downloadable from
-  # the run, so a consumer can try a commit before it is tagged.
-  #
-  # `needs` gates it on every row of the test matrix, so a commit that stopped
-  # compiling on Windows - or stopped cross-compiling for a phone - never
-  # produces a package at all.
+  # Pack every green commit so packaging failures appear before release tags.
   pack:
     name: Pack
     needs: test
@@ -356,16 +210,7 @@ jobs:
         with:
           dotnet-version: 10.0.x
 
-      # Ask MinVer for the version rather than working it out a second way.
-      # This is the same target the pack below runs, so the two cannot
-      # disagree, and publishing it as a job output means the tag check
-      # downstream compares against what was actually packed rather than
-      # against a fresh guess.
-      #
-      # Two separate single-property calls on purpose: -getProperty returns a
-      # bare string for one property and a JSON object for two. The restore is
-      # not optional - MinVer's targets arrive with the package, so without it
-      # this fails with MSB4057, "the target MinVer does not exist".
+      # Restore MinVer, then query single properties for plain-text outputs.
       - name: Resolve the version
         id: version
         run: |
@@ -380,26 +225,14 @@ jobs:
             echo "$version is a pre-release ($prerelease)" >> "$GITHUB_STEP_SUMMARY"
           fi
 
-      # The natives this run built, back out of the jobs that built them and
-      # into the tree at the paths the packaging projects expect. Nothing is
-      # rebuilt here: the binaries that go into a package are the ones the
-      # test and checks jobs actually exercised, which is the same argument
-      # the publish job makes for pushing pack's exact bytes.
-      #
-      # No `continue-on-error` and no glob: a payload package that packs
-      # nothing is the failure mode this whole phase invites, so a missing
-      # download must stop the run. EnsurePayloadExists catches it a second
-      # time if a download silently produced an empty directory.
+      # Package the exact native artifacts exercised by the test matrix.
       - name: Collect the natives
         uses: actions/download-artifact@v4
         with:
           pattern: ffaudio-*
           path: artifacts/natives
 
-      # download-artifact with a pattern nests each artifact under its own
-      # name, which is not where the packaging projects look. The desktop
-      # three each carry a platform folder of their own; the mobile two were
-      # uploaded as the contents of one.
+      # Restore artifacts to the paths expected by packaging projects.
       - name: Lay the natives out
         run: |
           set -euo pipefail
@@ -419,9 +252,7 @@ jobs:
             dotnet pack "$project" --configuration Release -p:ContinuousIntegrationBuild=true --output artifacts/nupkg
           done
 
-      # What went into the packages, in the log, so a build's version and
-      # dependencies are readable without downloading anything - and, for the
-      # payload packages, that they are not empty.
+      # Log package contents, including native payload presence.
       - name: Show what was packed
         run: |
           for package in artifacts/nupkg/*.nupkg; do
@@ -435,31 +266,7 @@ jobs:
           path: artifacts/nupkg/*
           if-no-files-found: error
 
-  # The packages, used the way a consumer uses them, on every platform.
-  #
-  # Everything above this proves the source works. Nothing above it proves the
-  # packages do, and the two are further apart than they look. A desktop
-  # native arrives by RID, out of runtimes/<rid>/native/ in a payload package,
-  # and is found by name rather than by the walk up to native/artifacts/ the
-  # tree's own runs use. A phone's arrives because FFAudio.NET.iOS or
-  # FFAudio.NET.Android ships a .targets file that declares it in the
-  # consuming project - a file that is not compiled, not tested and not run by
-  # anything else in this repo. It runs for the first time inside somebody
-  # else's build, and if it is wrong the symptom there is a link error or an
-  # app that dies at launch.
-  #
-  # So each row rebuilds the same runner the test matrix ran, with the tree's
-  # own project reference and native switched off and the packages switched
-  # on, and runs it. Same checks, same tally, same exit code - the only
-  # difference is where the binding and the native came from, which is the
-  # whole question.
-  #
-  # It needs `pack` and downloads the nupkg artifact rather than building
-  # anything native: the bytes under test are the ones that would be pushed
-  # to nuget.org, not a second build of the same commit. Which also means this
-  # is the job that would notice a packaging change that packs an empty
-  # payload, drops a .targets file, or names the wrong RID or buildTransitive
-  # folder - none of which anything else here can see.
+  # Exercise the packed binding and native payloads as consumers receive them.
   package:
     name: Test package (${{ matrix.name }})
     needs: pack
@@ -509,21 +316,14 @@ jobs:
           name: nupkg
           path: artifacts/nupkg
 
-      # A local folder feed, and nuget.org left in place because the binding
-      # package has real dependencies to restore. The source is added to a
-      # config in the repo root rather than the user profile so the whole
-      # thing is visible in the log if it goes wrong.
+      # Add the packed artifacts as a visible local feed while retaining nuget.org.
       - name: Point NuGet at what was packed
         run: |
           dotnet new nugetconfig
           dotnet nuget add source "${{ github.workspace }}/artifacts/nupkg" --name packed --configfile nuget.config
           cat nuget.config
 
-      # Native.Resolve walks up to native/artifacts/ before it asks the loader
-      # by name, which is how the tree's own runs find a native. Here that walk
-      # must find nothing, or a green run proves the tree rather than the
-      # package. A fresh checkout builds no natives, and this says so out loud
-      # rather than leaving it to be true by accident.
+      # Ensure package tests cannot resolve a native from the source tree.
       - name: Check nothing native is in the tree
         run: |
           if [ -e native/artifacts ]; then
@@ -531,8 +331,7 @@ jobs:
             exit 1
           fi
 
-      # Every shipped package is LGPL-only, Windows' pinned download and the
-      # static desktop builds alike, so the licence gate is on for all three.
+      # Every shipped desktop payload must report LGPL terms.
       - name: Test package
         if: ${{ !matrix.mobile }}
         env:
@@ -543,8 +342,7 @@ jobs:
         if: matrix.platform == 'ios'
         run: tests/checks/FFAudio.Checks.iOS/run.sh
 
-      # As in the test matrix: KVM for the emulator, and the action owns its
-      # lifecycle while the script is told which one to use.
+      # Grant the action-managed emulator access to KVM.
       - name: Let the emulator use KVM
         if: matrix.platform == 'android'
         run: |
@@ -563,31 +361,14 @@ jobs:
           emulator-options: -no-window -no-audio -no-boot-anim -no-snapshot-load -gpu swiftshader_indirect
           script: FFAUDIO_ANDROID_SERIAL=emulator-5554 tests/checks/FFAudio.Checks.Android/run.sh
 
-  # Tags only, and only after every test job, the pack above, and the run that
-  # used what it packed have gone green - `needs` is what makes that a
-  # dependency rather than a coincidence of timing. A push to nuget.org cannot be taken back, only unlisted, so the
-  # one irreversible step in this repo does not race anything.
-  #
-  # There is no checkout and no build here, deliberately. This job downloads
-  # the package `pack` produced and pushes those exact bytes; the thing that
-  # gets published is therefore the thing the run tested, not a second
-  # compilation of the same commit that nobody looked at.
+  # Publish tested package bytes only after all package checks pass on a v* tag.
   publish:
     name: Publish to NuGet
     needs: [pack, package]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
 
-    # Trusted publishing: there is no long-lived API key anywhere. nuget.org
-    # trusts an OIDC token GitHub mints for this job, and only this job - the
-    # policy on nuget.org names this repository, this workflow file and this
-    # environment, so a token from any other workflow, or from a job outside
-    # the environment, is refused. id-token: write is what lets the job ask
-    # for that token; the workflow-wide contents: read does not carry over
-    # once a job declares permissions of its own, and nothing here needs it.
-    #
-    # The environment is also where a required reviewer or a tag-only
-    # deployment rule would go, in the repository's settings rather than here.
+    # NuGet trusted publishing exchanges this job's OIDC token for short-lived access.
     environment: release
     permissions:
       id-token: write
@@ -602,11 +383,7 @@ jobs:
           name: nupkg
           path: artifacts/nupkg
 
-      # The tag says what version this is meant to be; MinVer, back in `pack`,
-      # said what version was actually built. They agree unless something went
-      # wrong upstream - a checkout that lost its history yields 0.0.0-alpha.0
-      # and would otherwise be published under a v1.2.3 tag without complaint.
-      # Cheaper to find out here than to unlist it afterwards.
+      # Refuse publication if MinVer's packed version differs from the tag.
       - name: Check the version against the tag
         env:
           VERSION: ${{ needs.pack.outputs.version }}
@@ -624,20 +401,14 @@ jobs:
             echo "Publishing $VERSION as a pre-release ($PRERELEASE)" >> "$GITHUB_STEP_SUMMARY"
           fi
 
-      # Trades the job's OIDC token for an API key that lives for an hour and
-      # can push only the packages this account owns. NUGET_USER is the
-      # nuget.org account name - the profile, not an email - that owns the
-      # trusted publishing policy.
+      # NUGET_USER owns the configured trusted-publishing policy.
       - name: Log in to NuGet
         id: nuget
         uses: NuGet/login@v1
         with:
           user: ${{ secrets.NUGET_USER }}
 
-      # --skip-duplicate so re-running a failed job after a partial push is
-      # harmless rather than a hard error on a version that is already up.
-      # The .snupkg beside each package goes with it; `dotnet nuget push`
-      # sends symbol packages alongside the ones they belong to.
+      # Allow safe retries after a partial push; symbol packages are sent alongside.
       - name: Push to NuGet
         run: |
           dotnet nuget push 'artifacts/nupkg/*.nupkg' \

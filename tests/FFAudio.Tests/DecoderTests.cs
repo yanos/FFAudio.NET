@@ -11,13 +11,7 @@ using Xunit;
 
 namespace FFAudio.Tests;
 
-// Exercises the façade end to end, against real FFmpeg libraries. Tagged
-// because they need a native component that is built rather than restored
-// (native/build-all.sh), so a machine without it filters them out instead of
-// failing them.
-//
-// The first two tests are the whole argument for this library existing. Every
-// other one is here so that argument keeps holding.
+// End-to-end tests requiring a native built by native/build-all.sh.
 [Trait("Category", "RequiresNative")]
 public class DecoderTests : IDisposable
 {
@@ -41,9 +35,7 @@ public class DecoderTests : IDisposable
         return output.ToArray();
     }
 
-    // The claim the whole façade rests on: a 24-bit source arrives with all
-    // 24 bits. Measured against LibVLC's amem seam on 2026-09-03, the same
-    // file comes back as 16-bit int regardless of the format requested.
+    // Verify that 24-bit source precision reaches the caller intact.
     [Fact]
     public void A_24_bit_source_is_delivered_with_every_bit_intact()
     {
@@ -65,10 +57,7 @@ public class DecoderTests : IDisposable
         }
     }
 
-    // The contrast, so the test above is not just asserting that arithmetic
-    // works. Asking for S16 loses the low byte of every sample - which is
-    // exactly and only what LibVLC's amem seam can give, for every track, on
-    // every platform, whatever format is asked of it.
+    // S16 conversion should discard the source's low eight bits.
     [Fact]
     public void The_same_source_asked_for_as_16_bit_loses_the_low_bits()
     {
@@ -86,23 +75,11 @@ public class DecoderTests : IDisposable
                 differing++;
         }
 
-        // Rounding, not truncation, so a handful of samples land one step off
-        // the naive shift; the point is that the low byte is gone either way.
+        // Conversion may round rather than truncate by one step.
         Assert.True(differing < Frames / 100, $"{differing} of {Frames} frames did not match a 16-bit truncation");
     }
 
-    // The four formats below are in the ABI and in SampleFormat, and until
-    // these tests two of them were called for by nothing at all - no caller, no
-    // test, no check anywhere. Plausible and unexercised is the state every
-    // audio defect worth the name starts in, and the first consumer to ask for
-    // S32 or F32 would have been the one to find out. These make "the façade
-    // delivers four formats" a fact rather than a declaration.
-
-    // The premise pack_s24 rests on, asserted rather than inferred from the
-    // packing appearing to work. FFmpeg has no 24-bit sample format at all, so
-    // a 24-bit source is decoded into S32 left-aligned - the three high bytes
-    // are the whole sample and the low byte is padding. Were that ever not
-    // true, S24 would go quietly wrong rather than fail.
+    // FFmpeg represents 24-bit input as left-aligned S32 with a padding low byte.
     [Fact]
     public void An_S32_delivery_of_a_24_bit_source_leaves_the_low_byte_empty()
     {
@@ -121,10 +98,7 @@ public class DecoderTests : IDisposable
         Assert.Equal(0, occupied);
     }
 
-    // And so the packing is a bandwidth decision rather than a lossy one: the
-    // same source asked for both ways carries the same bits, and S24 is S32
-    // with the padding dropped. This is the sentence pack_s24's comment makes
-    // and nothing checked.
+    // Packed S24 must equal S32 with only its padding byte removed.
     [Fact]
     public void S24_is_S32_with_the_padding_dropped()
     {
@@ -149,12 +123,7 @@ public class DecoderTests : IDisposable
         Assert.Equal(s24, dropped);
     }
 
-    // A float significand holds 24 bits exactly, which is both why
-    // PcmSampleFormat stops at S24 and why F32 is worth exposing to someone
-    // whose own pipeline is float: a 24-bit source survives it with no
-    // rounding whatsoever. Exact equality rather than a tolerance, and that is
-    // the claim - v/2^23 is a division by a power of two on a value that fits
-    // the significand, so every step of it is exact.
+    // A float significand represents every 24-bit sample exactly.
     [Fact]
     public void F32_carries_a_24_bit_source_with_no_rounding_at_all()
     {
@@ -178,12 +147,7 @@ public class DecoderTests : IDisposable
         Assert.Equal(0, differing);
     }
 
-    // BytesPerFrame is what every caller sizes its buffers and its ring by, so
-    // a format whose advertised width disagreed with what ffaudio_decoder_read
-    // actually writes would surface as a buffer bug in the caller rather than
-    // as a failure here. Four formats, one piece of arithmetic, no resampling
-    // asked for - so the frame count is exact rather than swresample's tail
-    // either side of it.
+    // Advertised frame widths must match the bytes actually emitted.
     [Theory]
     [InlineData(SampleFormat.S16, 2)]
     [InlineData(SampleFormat.S24, 3)]
@@ -218,9 +182,7 @@ public class DecoderTests : IDisposable
         using var decoder = Decoder.OpenPath(HiResFixture(), SampleFormat.S16, sampleRate: 48000);
         var pcm = DecodeAll(decoder);
 
-        // Not exactly half: swresample's filter has a delay, and the tail it
-        // holds is flushed rather than dropped, so the count lands within a
-        // few frames either side.
+        // Allow for swresample filter delay and its flushed tail.
         Assert.InRange(pcm.Length / 4, Frames / 2 - 64, Frames / 2 + 64);
     }
 
@@ -237,9 +199,7 @@ public class DecoderTests : IDisposable
         Assert.Equal(expected, DecodeAll(fromStream));
     }
 
-    // The case that broke a whole AAC album on the phone: a stream the
-    // platform would not let the demuxer seek. FFmpeg is told so up front and
-    // reads it forwards instead of discarding the demuxer.
+    // Forward-only streams must decode without attempted seeks.
     [Fact]
     public void A_forward_only_stream_still_decodes()
     {
@@ -270,8 +230,7 @@ public class DecoderTests : IDisposable
         var landed = decoder.Seek(TimeSpan.FromMilliseconds(100));
         Assert.InRange(landed, TimeSpan.Zero, TimeSpan.FromMilliseconds(100));
 
-        // PCM has no keyframes, so this particular container lands exactly;
-        // the contract the caller has to honour is the range above.
+        // PCM has no keyframes, so this fixture lands exactly.
         var remaining = DecodeAll(decoder).Length / 6;
         Assert.InRange(remaining, Frames - (int)(0.100 * HiResRate) - 64, Frames);
     }
@@ -320,18 +279,12 @@ public class DecoderTests : IDisposable
         var exception = Assert.Throws<DecodeException>(
             () => Decoder.OpenPath(Path.Combine(_directory, "absent.wav"), SampleFormat.S16));
 
-        // FFmpeg's own diagnosis, not a flattened "could not open" - the
-        // reason ffaudio_error_string passes AVERROR codes through untouched.
+        // Preserve FFmpeg's specific diagnosis.
         Assert.Contains("No such file", exception.Message, StringComparison.OrdinalIgnoreCase);
         Assert.True(exception.Code < 0, $"error code was {exception.Code}");
     }
 
-    // A stream that dies mid-track must fault, not spin and not end quietly.
-    // Both halves matter. LibVLC's equivalent hot-looped 61,760 times on the
-    // same signal and then had its demuxer fabricate the rest of the track,
-    // so a cut-off song was indistinguishable from one the listener heard;
-    // here the failure surfaces as an exception after a bounded number of
-    // reads, with the audio that did arrive already handed over.
+    // A mid-stream failure must surface after already-decoded audio, without spinning.
     [Fact]
     public void A_stream_that_fails_mid_track_faults_rather_than_ending_quietly()
     {
@@ -348,11 +301,7 @@ public class DecoderTests : IDisposable
                 produced += read;
         });
 
-        // The wording is the C runtime's strerror for EIO, which FFmpeg passes
-        // through untouched, and the runtimes disagree: glibc and Apple libc
-        // say "Input/output error", the MSVC one says "I/O error". Pinning
-        // either spelling on its own asserts about the C library rather than
-        // about the decoder faulting, which is what this test is for.
+        // strerror wording differs between C runtimes.
         Assert.Contains(OperatingSystem.IsWindows() ? "I/O error" : "Input/output error", thrown.Message);
         Assert.InRange(produced, 1, Frames * 6 - 1);
         Assert.InRange(source.Reads, 1, 200);
@@ -374,9 +323,7 @@ public class DecoderTests : IDisposable
         Assert.Equal(expected, DecodeAll(decoder));
     }
 
-    // A catalog that says FLAC about a WAV: the forced open fails, the stream
-    // is rewound and probed, and the track plays - and the mislabel is logged,
-    // because that warning is the only place it ever surfaces.
+    // A wrong hint should fall back to probing and log the metadata error.
     [Fact]
     public void A_wrong_format_hint_falls_back_to_probing_and_says_so()
     {
@@ -422,8 +369,7 @@ public class DecoderTests : IDisposable
         Assert.True(borrowed.CanRead);
     }
 
-    // An open that throws never returns a decoder to Dispose, so an owned
-    // stream it does not close itself is never closed at all.
+    // Failed opens must dispose owned streams because no Decoder is returned.
     [Fact]
     public void A_failed_open_closes_a_stream_the_decoder_owns()
     {
@@ -439,9 +385,7 @@ public class DecoderTests : IDisposable
 
     [Fact]
     public void The_native_library_matches_the_abi_this_build_expects() =>
-        // Not a tautology: it is the check that would have caught a façade
-        // rebuilt with a reordered format struct, which otherwise reports
-        // plausible nonsense rather than failing.
+        // Detect managed/native format-struct layout mismatches.
         Decoder.OpenPath(HiResFixture(), SampleFormat.S16).Dispose();
 
     private static int ReadFully(Decoder decoder, Span<byte> buffer)

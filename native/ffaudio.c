@@ -11,9 +11,7 @@
 #include <libavutil/samplefmt.h>
 #include <libswresample/swresample.h>
 
-// 32KB is FFmpeg's own default for a custom AVIOContext. Bigger buffers do
-// not help a decoder that is already reading ahead; smaller ones turn one
-// range request into several.
+// Match FFmpeg's default custom AVIO buffer size.
 #define FFAUDIO_IO_BUFFER_BYTES 32768
 
 struct ffaudio_decoder {
@@ -27,15 +25,10 @@ struct ffaudio_decoder {
 
     ffaudio_decoder_format format;
 
-    // Kept rather than uninitialised at the end of finish_open, because it is
-    // the answer to ffaudio_decoder_channel_layout - the delivered layout,
-    // after any requested mix, which is the one a caller has to map channels
-    // against. swresample copies it, so holding on costs nothing.
+    // Delivered layout after any requested mix.
     AVChannelLayout out_layout;
 
-    // What swresample is asked to produce, which is not always what the
-    // caller gets: packed 24-bit is not one of swresample's formats, so S24
-    // is converted as S32 and packed on the way out (see pack_s24).
+    // S24 is produced as S32 by swresample, then packed on output.
     enum AVSampleFormat swr_format;
     int swr_bytes_per_frame;
     int out_bytes_per_frame;
@@ -62,12 +55,7 @@ struct ffaudio_decoder {
     int32_t requested_channels;
 };
 
-// ---------------------------------------------------------------- custom I/O
-
-// FFmpeg reads 0 as "nothing this time, ask again", not as end of stream, and
-// will spin on a callback that keeps answering 0. The managed stream reports
-// its end the ordinary .NET way, with a zero-length read, so the translation
-// has to happen here or a finished track never finishes.
+// Translate .NET's zero-byte EOF into FFmpeg's explicit EOF code.
 static int io_read_packet(void *opaque, uint8_t *buffer, int buf_size)
 {
     ffaudio_decoder *dec = (ffaudio_decoder *)opaque;
@@ -82,16 +70,12 @@ static int io_read_packet(void *opaque, uint8_t *buffer, int buf_size)
 static int64_t io_seek(void *opaque, int64_t offset, int whence)
 {
     ffaudio_decoder *dec = (ffaudio_decoder *)opaque;
-    // AVSEEK_FORCE only asks the access layer to try harder; it says nothing
-    // this façade can act on, and left in place it would turn a plain
-    // SEEK_SET into an unrecognised whence.
+    // AVSEEK_FORCE does not change the underlying seek operation.
     int base = whence & ~AVSEEK_FORCE;
     if (base == AVSEEK_SIZE)
         base = FFAUDIO_SEEK_SIZE;
     return dec->io_seek(dec->io_opaque, offset, base);
 }
-
-// ------------------------------------------------------------------ helpers
 
 static enum AVSampleFormat swr_format_for(int32_t requested)
 {
@@ -109,11 +93,7 @@ static int delivered_bytes_per_sample(int32_t requested)
     return requested == FFAUDIO_SAMPLE_S16 ? 2 : requested == FFAUDIO_SAMPLE_S24 ? 3 : 4;
 }
 
-// FFmpeg carries 24-bit PCM left-aligned in a 32-bit container, so the three
-// high bytes are the whole sample and the low byte is padding. Dropping that
-// byte is the packing, and it is lossless - which is the entire reason this
-// decoder exists rather than LibVLC's, whose amem seam truncates to 16 bits
-// before the caller sees a byte.
+// Pack FFmpeg's left-aligned 24-in-32 PCM without losing significant bits.
 static void pack_s24(const uint8_t *src, uint8_t *dst, int samples)
 {
     for (int i = 0; i < samples; i++) {
@@ -148,8 +128,7 @@ static int ensure_buffers(ffaudio_decoder *dec, int frames)
     return FFAUDIO_OK;
 }
 
-// Converts one decoded AVFrame into dec->pending, replacing whatever was
-// there. Callers only ever call this with pending already consumed.
+// Convert one decoded frame into an empty pending buffer.
 static int stage_frame(ffaudio_decoder *dec)
 {
     int max_out = (int)swr_get_out_samples(dec->swr, dec->frame->nb_samples);
@@ -182,9 +161,7 @@ static int stage_frame(ffaudio_decoder *dec)
     return FFAUDIO_OK;
 }
 
-// Drains swresample's own held samples once the codec has nothing left. Its
-// resampler keeps a tail; without this the last few milliseconds of every
-// track are dropped, which across an album is an audible gap at each seam.
+// Drain swresample's delayed tail after the codec is exhausted.
 static int stage_swr_tail(ffaudio_decoder *dec)
 {
     int remaining = (int)swr_get_out_samples(dec->swr, 0);
@@ -212,8 +189,7 @@ static int stage_swr_tail(ffaudio_decoder *dec)
     return FFAUDIO_OK;
 }
 
-// One turn of the decode loop: pull a frame out of the codec, feeding it
-// packets until it has one. Leaves the result in dec->pending.
+// Feed packets until one decoded frame is staged.
 static int stage_next(ffaudio_decoder *dec)
 {
     if (dec->finished)
@@ -253,48 +229,17 @@ static int stage_next(ffaudio_decoder *dec)
 
         rc = avcodec_send_packet(dec->codec, dec->packet);
         av_packet_unref(dec->packet);
-        // A corrupt packet is not a dead stream. FFmpeg's own players skip
-        // it and carry on, and a music library with one bad frame in a file
-        // should play the file rather than refuse it.
+        // Skip corrupt packets when the decoder can continue.
         if (rc < 0 && rc != AVERROR(EAGAIN) && rc != AVERROR_INVALIDDATA)
             return rc;
     }
 }
 
-// --------------------------------------------------------------------- open
-
-// Embedded cover art reaches FFmpeg as a video stream carrying a single
-// attached picture, and avformat_find_stream_info insists on knowing every
-// stream's parameters - for a video stream, its dimensions. This build has no
-// video decoder to learn them with (see native/codec-set.sh: the shipped
-// FFmpeg is --disable-everything plus an audio-only list), so the probe gives
-// up on every art-bearing file and says so on stderr:
-//
-//   Could not find codec parameters for stream 1 (Video: mjpeg, none):
-//   unspecified size
-//
-// which is how one ordinary album turns a console into pages of noise. It is
-// purely structural - the façade hands back PCM and never decodes a picture -
-// but it is emitted once per open, and a gapless player opens two at a time.
-//
-// Marking the stream AVDISCARD_ALL does not help: avformat_find_stream_info
-// never consults discard, and the loop that reports this walks every stream
-// unconditionally. Lowering the log level would, but av_log_set_level is
-// process-global, and a library that quiets FFmpeg behind its host's back -
-// racing the host's own threads to do it - is worse than the noise.
-//
-// So the parameters are supplied rather than suppressed. The demuxer has
-// already put the encoded image in AVStream.attached_pic by the time
-// avformat_open_input returns, and an image states its own dimensions in its
-// header, which is far less work than decoding it. has_codec_parameters wants
-// a non-zero width; with no decoder present it never asks about pixel format.
-// A picture that cannot be parsed is simply left alone, warning and all.
+// Populate attached-picture dimensions before stream analysis. The audio-only
+// FFmpeg build cannot decode images, and missing dimensions trigger warnings.
 static void size_attached_pictures(AVFormatContext *fmt);
 
-// The dimensions out of a JPEG's frame header. Walk the marker segments until
-// a start-of-frame is reached: SOF0/1/2/... all carry height then width as
-// big-endian 16-bit at the same offset. SOI/EOI and the RSTn markers are the
-// standalone ones, carrying no length word to skip by.
+// Read dimensions from the first JPEG start-of-frame marker.
 static int jpeg_size(const uint8_t *d, int n, int *w, int *h)
 {
     if (n < 4 || d[0] != 0xFF || d[1] != 0xD8)
@@ -315,8 +260,7 @@ static int jpeg_size(const uint8_t *d, int n, int *w, int *h)
         }
 
         int len = (d[i + 2] << 8) | d[i + 3];
-        // A start-of-frame, excluding the four that are not frames at all:
-        // DHT (C4), JPG (C8) and DAC (CC) share the C0-CF range.
+        // DHT, JPG, and DAC share the marker range but are not frame headers.
         if (marker >= 0xC0 && marker <= 0xCF
             && marker != 0xC4 && marker != 0xC8 && marker != 0xCC) {
             if (i + 9 >= n)
@@ -332,9 +276,7 @@ static int jpeg_size(const uint8_t *d, int n, int *w, int *h)
     return 0;
 }
 
-// PNG states its size in the IHDR chunk, which the spec requires to come
-// first: an 8-byte signature, the chunk's length and type, then width and
-// height as big-endian 32-bit.
+// PNG requires IHDR to be the first chunk.
 static int png_size(const uint8_t *d, int n, int *w, int *h)
 {
     static const uint8_t sig[8] = { 0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A };
@@ -346,8 +288,7 @@ static int png_size(const uint8_t *d, int n, int *w, int *h)
     return *w > 0 && *h > 0;
 }
 
-// GIF and BMP are both little-endian and both fixed-offset, which is the only
-// reason they are worth the handful of lines: some taggers still write them.
+// GIF and BMP dimensions are little-endian at fixed offsets.
 static int gif_size(const uint8_t *d, int n, int *w, int *h)
 {
     if (n < 10 || memcmp(d, "GIF8", 4) != 0)
@@ -365,7 +306,7 @@ static int bmp_size(const uint8_t *d, int n, int *w, int *h)
 
     *w = (int)((uint32_t)d[18] | ((uint32_t)d[19] << 8) | ((uint32_t)d[20] << 16) | ((uint32_t)d[21] << 24));
     int height = (int)((uint32_t)d[22] | ((uint32_t)d[23] << 8) | ((uint32_t)d[24] << 16) | ((uint32_t)d[25] << 24));
-    // A negative height is a top-down bitmap, not a smaller one.
+    // Negative BMP heights indicate top-down row order.
     *h = height < 0 ? -height : height;
     return *w > 0 && *h > 0;
 }
@@ -449,9 +390,7 @@ static int finish_open(ffaudio_decoder *dec)
     dec->swr_bytes_per_frame = av_get_bytes_per_sample(dec->swr_format) * out_channels;
     dec->out_bytes_per_frame = delivered_bytes_per_sample(dec->requested_format) * out_channels;
 
-    // bits_per_raw_sample is what the container claims the source really
-    // carries, which for 24-in-32 PCM is the number that matters; the
-    // container's word size would overstate it.
+    // Preserve the significant depth of formats such as 24-bit PCM in 32-bit words.
     int depth = par->bits_per_raw_sample;
     if (depth <= 0)
         depth = av_get_bytes_per_sample(dec->codec->sample_fmt) * 8;
@@ -578,8 +517,7 @@ FFAUDIO_API int ffaudio_decoder_open_io(void *opaque,
         rc = FFAUDIO_ERR_NO_MEMORY;
         goto fail;
     }
-    // Without this an mp4 whose moov atom sits at the end is unplayable over
-    // a forward-only stream, and with it FFmpeg knows not to try.
+    // Prevent FFmpeg from attempting seeks on forward-only input.
     dec->avio->seekable = dec->seekable ? AVIO_SEEKABLE_NORMAL : 0;
 
     dec->fmt = avformat_alloc_context();
@@ -618,8 +556,6 @@ fail:
     return rc;
 }
 
-// --------------------------------------------------------------------- read
-
 FFAUDIO_API int ffaudio_decoder_get_format(ffaudio_decoder *decoder, ffaudio_decoder_format *out_format)
 {
     if (!decoder || !out_format)
@@ -657,9 +593,7 @@ FFAUDIO_API int ffaudio_decoder_read(ffaudio_decoder *decoder,
             return written > 0 ? FFAUDIO_OK : FFAUDIO_EOF;
         }
         if (rc != FFAUDIO_OK) {
-            // Bytes already decoded are still good audio; report them and let
-            // the next call surface the error rather than throwing away a
-            // buffer the caller could have played.
+            // Return valid decoded bytes before surfacing the error next time.
             if (written > 0) {
                 *out_bytes = written;
                 return FFAUDIO_OK;
@@ -693,9 +627,7 @@ FFAUDIO_API int ffaudio_decoder_seek(ffaudio_decoder *decoder, int64_t position_
     decoder->finished = 0;
     decoder->last_frame_ms = position_ms;
 
-    // swresample has no public flush, and its held tail belongs to audio
-    // before the seek - carried across it would splice the old position onto
-    // the new one. Rebuilding the context is the only way to drop it.
+    // Rebuild swresample to discard delayed samples from before the seek.
     swr_free(&decoder->swr);
     AVChannelLayout out_layout;
     av_channel_layout_default(&out_layout, decoder->format.channels);
@@ -711,10 +643,7 @@ FFAUDIO_API int ffaudio_decoder_seek(ffaudio_decoder *decoder, int64_t position_
     if (rc < 0)
         return rc;
 
-    // Staging one frame is what turns the requested position into the landed
-    // one: the demuxer is keyframe-bound and routinely lands earlier, and a
-    // scrubber told the request rather than the landing stays permanently
-    // offset from the audio. Same reason ITrackDecoder.SeekSettled exists.
+    // Decode one frame to determine the demuxer's actual landing position.
     rc = stage_next(decoder);
     if (rc != FFAUDIO_OK && rc != FFAUDIO_EOF)
         return rc;
@@ -740,8 +669,7 @@ FFAUDIO_API void ffaudio_decoder_close(ffaudio_decoder *decoder)
     if (decoder->fmt)
         avformat_close_input(&decoder->fmt);
     if (decoder->avio) {
-        // avio_context_free does not free the buffer, and the buffer it holds
-        // is not necessarily the one handed over - FFmpeg reallocates it.
+        // FFmpeg may replace the buffer; avio_context_free does not free it.
         av_freep(&decoder->avio->buffer);
         avio_context_free(&decoder->avio);
     }
@@ -751,13 +679,7 @@ FFAUDIO_API void ffaudio_decoder_close(ffaudio_decoder *decoder)
     av_free(decoder);
 }
 
-
-// ------------------------------------------------------------------ metadata
-
-// Every string this façade hands back goes through here: caller-owned
-// storage, always NUL-terminated, never an allocation. A buffer too small is
-// reported rather than silently accepted, because a truncated codec name that
-// looks like a codec name is worse than an error.
+// Copy into caller-owned storage and report truncation.
 static int copy_string(char *buffer, int32_t buffer_bytes, const char *value)
 {
     if (!buffer || buffer_bytes <= 0)
@@ -776,9 +698,7 @@ static int copy_string(char *buffer, int32_t buffer_bytes, const char *value)
     return FFAUDIO_OK;
 }
 
-// av_dict_get with an empty key and IGNORE_SUFFIX is FFmpeg's own iteration
-// idiom, and the portable one: av_dict_iterate is newer than some of the
-// FFmpeg builds this links against.
+// av_dict_get supports older FFmpeg versions than av_dict_iterate.
 static int dict_count(const AVDictionary *dict)
 {
     int count = 0;
@@ -798,10 +718,7 @@ static const AVDictionaryEntry *dict_at(const AVDictionary *dict, int index)
     return NULL;
 }
 
-// The container's tags and the audio stream's own, in that order. Both,
-// because where a format puts them is a property of the format: an MP3's ID3
-// frames land on the container, an Ogg's Vorbis comments on the stream, and a
-// caller asking what a file says means neither of those distinctions.
+// Read container tags first, then audio-stream tags.
 static const AVDictionary *tag_source(ffaudio_decoder *dec, int which)
 {
     if (which == 0)
@@ -840,9 +757,7 @@ FFAUDIO_API int ffaudio_decoder_tag_at(ffaudio_decoder *decoder,
     return rc != FFAUDIO_OK ? rc : rc2;
 }
 
-// FFmpeg models embedded art as a video stream flagged ATTACHED_PIC whose
-// whole content is one already-demuxed packet hanging off the stream, so
-// there is nothing to read or decode here - the bytes are simply present.
+// Attached pictures are already-demuxed packets on flagged video streams.
 static const AVStream *attached_picture(ffaudio_decoder *dec)
 {
     for (unsigned i = 0; i < dec->fmt->nb_streams; i++) {
@@ -855,8 +770,7 @@ static const AVStream *attached_picture(ffaudio_decoder *dec)
 
 static const char *picture_mime(const AVStream *stream)
 {
-    // The container may say so itself, and when it does it is more specific
-    // than anything derived from the codec id.
+    // Prefer the container's more specific MIME declaration.
     const AVDictionaryEntry *declared = av_dict_get(stream->metadata, "mimetype", NULL, 0);
     if (declared && declared->value && declared->value[0])
         return declared->value;
@@ -884,10 +798,7 @@ FFAUDIO_API int ffaudio_decoder_cover_art(ffaudio_decoder *decoder,
     if (!stream)
         return FFAUDIO_ERR_NOT_PRESENT;
 
-    // Whatever size_attached_pictures read out of the image header at open,
-    // or what a build that does have a video decoder worked out for itself -
-    // codecpar is the one place either answer lands. Zero means neither could
-    // tell, which the header documents as an ordinary answer.
+    // Zero dimensions mean the image header was unsupported.
     if (out_width)
         *out_width = stream->codecpar->width;
     if (out_height)
@@ -899,13 +810,11 @@ FFAUDIO_API int ffaudio_decoder_cover_art(ffaudio_decoder *decoder,
 
     int rc = copy_string(mime, mime_bytes, picture_mime(stream));
 
-    // Asking for the size and nothing else is the first half of the ordinary
-    // two-call sequence, so it is a success rather than a missing argument.
+    // A NULL buffer is the supported size-query operation.
     if (!buffer)
         return rc;
 
-    // Nothing is written on a short buffer. Half a JPEG is not a smaller
-    // JPEG, and a caller handed one would have no way to tell.
+    // Never return a partial encoded image.
     if (buffer_bytes < size)
         return FFAUDIO_ERR_TRUNCATED;
 
@@ -919,8 +828,6 @@ FFAUDIO_API int ffaudio_decoder_channel_layout(ffaudio_decoder *decoder,
     if (!decoder || !buffer || buffer_bytes <= 0)
         return FFAUDIO_ERR_ARGUMENT;
 
-    // Describes into the caller's buffer directly, and reports its own
-    // truncation the same way copy_string does.
     int rc = av_channel_layout_describe(&decoder->out_layout, buffer, (size_t)buffer_bytes);
     if (rc < 0)
         return rc;
@@ -984,10 +891,7 @@ FFAUDIO_API int ffaudio_ffmpeg_configuration(char *buffer, int32_t buffer_bytes)
     return copy_string(buffer, buffer_bytes, avutil_configuration());
 }
 
-// av_version_info is the git describe of the FFmpeg the binary was built from
-// - "9.0.2", or "n9.0.1-84-g946fcce07b" for a checkout between releases - which is
-// the version a relink has to start from. It is absent from some vendored
-// builds, in which case the numeric avutil version is all there is to say.
+// Fall back to the numeric library version when no source version is embedded.
 FFAUDIO_API int ffaudio_ffmpeg_version(char *buffer, int32_t buffer_bytes)
 {
     const char *info = av_version_info();

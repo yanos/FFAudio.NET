@@ -1,45 +1,6 @@
 #!/bin/bash
-# Runs FFAudio.Checks on an iOS Simulator and answers with an exit code.
-#
-# The same checks FFAudio.Tests runs on this machine, run against the real iOS
-# runtime instead. That difference is the entire point: three things this
-# library depends on are green at link time and fatal at launch, and none of
-# them can fail on a desktop.
-#
-#   Native.Resolve's iOS branch loads the façade by hand out of
-#   Frameworks/ffaudio.framework, because .NET-for-iOS resolves a P/Invoke by
-#   dlopen-ing the DllImport string and that matches nothing there. The
-#   resolver is registered from a [ModuleInitializer] because Mono resolves
-#   the library for a stub before running the declaring type's cctor.
-#
-#   OpenStream's read and seek callbacks are UnmanagedCallersOnly trampolines,
-#   compiled ahead of time here rather than JITted.
-#
-#   And the framework has to have embedded at all.
-#
-#   tests/checks/FFAudio.Checks.iOS/run.sh                 # first available simulator
-#   tests/checks/FFAudio.Checks.iOS/run.sh "iPhone 17 Pro" # by name
-#
-# FFAUDIO_PACKAGE_VERSION=0.1.0-alpha.0.9 tests/checks/FFAudio.Checks.iOS/run.sh
-#
-# runs the same checks against the packages instead of the tree: the binding
-# comes from FFAudio.NET and the framework from FFAudio.NET.iOS, injected by
-# that package's own buildTransitive .targets rather than declared by the
-# runner. That is the arrangement a consumer actually has, and it is the only
-# way to find out whether the package works - a green build of this repo says
-# nothing about it, because a ProjectReference resolves nothing and injects
-# nothing. Point NuGet at wherever the .nupkg files are first, with a
-# nuget.config or `dotnet nuget add source`.
-#
-# The app reports by writing a transcript into its own Documents directory,
-# which this reads out of the simulator's data container. Console.WriteLine
-# from a .NET iOS app does not reliably reach `simctl launch --console-pty`,
-# and a run that decodes perfectly but prints nothing is indistinguishable
-# from a hang - see AppDelegate's own remarks.
-#
-# For a physical device, build with -r ios-arm64 and install it however you
-# install a signed build; the app shows the same lines on screen, so a run
-# with no cable attached is still readable.
+# Run FFAudio.Checks on the first available or named iOS Simulator.
+# Set FFAUDIO_PACKAGE_VERSION to test restored packages instead of this tree.
 set -euo pipefail
 cd "$(dirname "$0")/../../.."
 
@@ -53,11 +14,7 @@ DEVICE="${1:-}"
 PACKAGE_VERSION="${FFAUDIO_PACKAGE_VERSION:-}"
 BUILD_ARGS=()
 
-# The framework has to exist before the build can embed it, and a missing one
-# is otherwise a link error several hundred lines into a build log. In package
-# mode there is nothing to look for here - the framework is inside a .nupkg
-# that restore has not unpacked yet, and its absence from the tree is the
-# normal state rather than a problem.
+# Fail early when tree-mode native artifacts are missing.
 if [ -n "$PACKAGE_VERSION" ]; then
   echo "==> Packages: FFAudio.NET + FFAudio.NET.iOS $PACKAGE_VERSION"
   BUILD_ARGS+=("-p:FFAudioPackageVersion=$PACKAGE_VERSION")
@@ -68,20 +25,17 @@ elif [ ! -d "native/artifacts/ios/ios-simulator/ffaudio.framework" ]; then
 fi
 
 if [ -z "$DEVICE" ]; then
-  # Newest runtime last in simctl's output, so the last match is the most
-  # current iOS available rather than the oldest still installed.
+  # simctl lists newer runtimes last.
   DEVICE=$(xcrun simctl list devices available | grep -oE '^\s+iPhone [^(]+' | tail -1 | xargs)
 fi
 
 echo "==> Simulator: $DEVICE"
 
-# Booting an already-booted simulator is an error, not a no-op.
+# Treat an already-booted simulator as ready.
 xcrun simctl boot "$DEVICE" 2>/dev/null || true
 xcrun simctl bootstatus "$DEVICE" -b >/dev/null
 
-# Always from clean. An incremental iOS build reliably launches into a Mono
-# AOT crash ("Managed Stacktrace: at <unknown> <0xffffffff>") that a clean
-# rebuild always fixes, and that crash reads exactly like a failing check.
+# Avoid a known stale incremental-build Mono AOT crash.
 echo "==> Cleaning"
 rm -rf tests/checks/FFAudio.Checks.iOS/obj tests/checks/FFAudio.Checks.iOS/bin \
        tests/checks/FFAudio.Checks/obj tests/checks/FFAudio.Checks/bin \
@@ -98,8 +52,7 @@ fi
 echo "==> Installing"
 xcrun simctl install "$DEVICE" "$APP"
 
-# The container only exists once the app has been installed, and its path
-# changes with every reinstall - so ask for it now rather than remembering one.
+# Resolve the new data-container path after installation.
 CONTAINER=$(xcrun simctl get_app_container "$DEVICE" "$BUNDLE_ID" data)
 LOG="$CONTAINER/Documents/$TRANSCRIPT"
 rm -f "$LOG"

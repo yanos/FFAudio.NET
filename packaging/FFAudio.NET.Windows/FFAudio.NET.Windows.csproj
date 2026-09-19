@@ -6,15 +6,7 @@
     <PayloadProbe>$(MSBuildThisFileDirectory)../../native/artifacts/windows/ffaudio.dll</PayloadProbe>
   </PropertyGroup>
 
-  <!-- Five DLLs rather than one, and by far the largest of these packages:
-       Windows has no system FFmpeg to link against, so native/windows/build.ps1
-       downloads a pinned LGPL build and ffaudio.dll imports avformat, avcodec,
-       avutil and swresample from beside it. They are dynamically linked and
-       replaceable, which is the LGPL route this platform takes.
-
-       A glob rather than four names, because the DLL filenames carry FFmpeg's
-       soversion - avcodec-63.dll today - and pinning those here would be a
-       second place to bump on every FFmpeg update. -->
+  <!-- Include the replaceable FFmpeg DLLs; the glob tolerates soversion changes. -->
   <ItemGroup>
     <None Include="../../native/artifacts/windows/*.dll"
           Pack="true" PackagePath="runtimes/win-x64/native/" />

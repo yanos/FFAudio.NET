@@ -4,18 +4,7 @@ using Xunit;
 
 namespace FFAudio.Tests;
 
-// Which FFmpeg is inside this binary, and whether it may be shipped.
-//
-// The licence is the one property of an FFmpeg build that cannot be corrected
-// after the fact: a GPL-configured library linked into a released package is a
-// licensing event, not a bug to fix in the next version. It is also the
-// property least visible from the outside - the binary looks identical, every
-// test passes, and every file decodes.
-//
-// So the answer comes from avutil rather than from the script that ran
-// configure. The machine these tests usually run on is the case in point: its
-// MacPorts FFmpeg reports "GPL version 2 or later", which is exactly right for
-// development and must never be packaged.
+// Verify metadata reported by the loaded FFmpeg binary, including its license.
 [Trait("Category", "RequiresNative")]
 public class FFmpegBuildTests
 {
@@ -26,12 +15,7 @@ public class FFmpegBuildTests
         Assert.False(string.IsNullOrWhiteSpace(FFmpegBuild.License));
     }
 
-    // The configure line is the half of the LGPL's relink route that the
-    // binary can state for itself, and it is long - 951 characters for the
-    // FFmpeg this was written against. That length is the point: it does not
-    // fit the first buffer the façade is handed, so this is also the only
-    // test that puts NativeText's grow-and-retry loop through more than one
-    // iteration.
+    // A real configure line exercises NativeText's grow-and-retry path.
     [Fact]
     public void The_configure_line_comes_back_whole()
     {
@@ -40,8 +24,7 @@ public class FFmpegBuildTests
         Assert.StartsWith("--", configuration);
         Assert.Equal(configuration, FFmpegBuild.Configuration);
 
-        // If this ever fails, the retry loop above stopped being exercised by
-        // anything - not that the configure line is wrong.
+        // Keep the fixture longer than NativeText's initial buffer.
         Assert.True(
             configuration.Length > 256,
             $"A configure line of {configuration.Length} characters fits the first buffer, " +
@@ -56,13 +39,7 @@ public class FFmpegBuildTests
             FFmpegBuild.IsRedistributable);
     }
 
-    // The check a release has to pass, off by default because a developer's
-    // machine is expected to fail it.
-    //
-    // Set FFAUDIO_REQUIRE_LGPL=1 wherever a package is built. Both halves are
-    // asserted rather than only the licence string: avutil's answer is the
-    // authority, and the configure line is what a person reads when the answer
-    // is the wrong one.
+    // Package builds set FFAUDIO_REQUIRE_LGPL; developer FFmpeg builds may be GPL.
     [Fact]
     public void A_shipping_build_carries_an_lgpl_only_ffmpeg()
     {

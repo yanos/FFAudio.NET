@@ -1,20 +1,6 @@
 #!/usr/bin/env bash
-# Cross-compiles a static, LGPL-only FFmpeg for every ABI Android ships,
-# into native/android/ffmpeg/prefix/<version>/<variant>/<abi>/.
-#
-# Same reason as ios/build-ffmpeg.sh: a phone has no package manager, so there
-# is nothing for pkg-config to find and the decoder has to bring its own
-# FFmpeg. And the same licensing consequence - Android links FFmpeg *in*, so
-# this configure line is what makes the repository build distributable under
-# the LGPL. Callers may opt into other terms; see ../../README.md.
-#
-# What it may decode is ../codec-set.sh's, shared with the iOS build rather
-# than restated here: what a phone can play should not depend on which phone.
-# --variant picks between the music-library `slim` set and a `full` one.
-#
-# Slow - tens of minutes across three ABIs - and idempotent: a prefix that
-# already has a libavformat.a is left alone unless --rebuild-ffmpeg is passed.
-# --help lists every option.
+# Cross-compile static FFmpeg for each supported Android ABI. Prefixes are
+# versioned and reusable unless rebuilding is requested.
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -32,9 +18,7 @@ work="$here/ffmpeg"
 source "$here/../codec-set.sh"
 version="$ffaudio_ffmpeg_version"
 
-# 21 rather than the csproj's minSdk of 23, to match native/miniaudio/android's
-# API level exactly: two native libraries in one APK disagreeing about their
-# floor is a difference with no upside and a confusing failure mode.
+# Match the API level used by the companion native audio library.
 api=21
 
 case "$(uname -s)" in
@@ -54,12 +38,7 @@ if [ ! -d "$work/ffmpeg-$version" ]; then
     tar -xf "$work/ffmpeg-$version.tar.xz" -C "$work"
 fi
 
-# The decoder and demuxer set, and which variant of it this build gets.
-# --variant full asks for every audio decoder FFmpeg has instead of the
-# music-library list; see ../codec-set.sh, which is also the reason this list
-# is no longer written out twice, once here and once for the other phone.
-# The flags are rendered before anything is configured so a variant that does
-# not exist fails now rather than three slices in.
+# Resolve the shared component set before configuring any ABI.
 components=()
 while IFS= read -r flag; do components+=("$flag"); done \
     < <(ffaudio_component_flags "$work/ffmpeg-$version")
@@ -82,11 +61,8 @@ build_abi() {
     mkdir -p "$build"
 
     echo "=== Configuring $ffaudio_variant FFmpeg for $abi ==="
-    # The NDK is one clang steered by target triple, so --cross-prefix names
-    # only the llvm-* binutils; the compiler is picked by name instead. Note
-    # --disable-network for the reason ios/build-ffmpeg.sh gives: a caller never
-    # lets FFmpeg open a URL, a streamed track arrives through the façade's own
-    # AVIO callbacks over SeekableHttpStream.
+    # The NDK compiler is selected by target triple; networking stays in the
+    # managed Stream callbacks rather than FFmpeg.
     (
         cd "$build"
         "$work/ffmpeg-$version/configure" \
@@ -116,9 +92,7 @@ build_abi() {
     echo "-> $prefix"
 }
 
-# x86_64 is --disable-x86asm because the x86 assembly needs nasm, which a Mac
-# does not have by default and which buys nothing here: the emulator ABI exists
-# so the checks can run, not so a listener uses it.
+# The emulator-only x86_64 build avoids an additional nasm dependency.
 build_abi arm64-v8a   aarch64 aarch64-linux-android
 build_abi armeabi-v7a arm     armv7a-linux-androideabi --cpu=armv7-a --enable-thumb
 build_abi x86_64      x86_64  x86_64-linux-android     --disable-x86asm

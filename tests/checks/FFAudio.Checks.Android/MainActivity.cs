@@ -11,28 +11,13 @@ using Android.Widget;
 
 namespace FFAudio.Checks.Android;
 
-// Name is pinned rather than left to the generated crc64 one: the driver
-// script has to name this activity to `am start` it, and a generated name
-// changes whenever the namespace does.
+// Pin the activity name used by the driver script.
 [Activity(Name = "com.yanos.ffaudio.checks.MainActivity",
           Label = "FFAudio checks", MainLauncher = true, Exported = true)]
 public class MainActivity : Activity
 {
-    // The output contract, in three places at once because each is the only
-    // one that works somewhere:
-    //
-    //  - a file in the app's private files directory, which is what
-    //    tests/checks/FFAudio.Checks.Android/run.sh reads back through `run-as`. It is
-    //    the reliable one: logcat is a ring buffer shared with the whole
-    //    system, so a long transcript competing with a chatty emulator can
-    //    lose lines, and a run that decoded everything but reported half its
-    //    tally is indistinguishable from a failing one.
-    //  - logcat, which is what a run watched live shows.
-    //  - the screen, so a run on a phone with no cable attached is readable
-    //    by the person holding it.
-    //
-    // Deliberately the same three, under the same prefixes, as the iOS
-    // runner's AppDelegate.
+    // Report to a durable file for automation, logcat for live runs, and the
+    // screen for disconnected devices. Keep prefixes aligned with iOS.
     private const string ResultPrefix = "FFAUDIO-CHECK ";
     private const string TallyPrefix = "FFAUDIO-CHECKS ";
     private const string LogTag = "FFAudioChecks";
@@ -58,9 +43,7 @@ public class MainActivity : Activity
             ViewGroup.LayoutParams.MatchParent,
             ViewGroup.LayoutParams.MatchParent));
 
-        // Off the UI thread: the checks block on decoding for seconds at a
-        // time, and an ANR kill halfway through would look like a failing
-        // check rather than a blocked main thread.
+        // Decoding must not block the UI thread and trigger an ANR.
         Task.Run(RunChecks);
     }
 
@@ -77,9 +60,7 @@ public class MainActivity : Activity
 
             var snapshot = transcript.ToString();
 
-            // Rewritten whole each time rather than appended: the script may
-            // read it at any moment, and a partial line would be read as a
-            // missing tally.
+            // Rewrite the complete snapshot so automation never reads a partial line.
             try
             {
                 File.WriteAllText(TranscriptPath, snapshot);
@@ -104,9 +85,7 @@ public class MainActivity : Activity
         }
         catch (Exception crashed)
         {
-            // A throw out here is not a failed check, it is the checks being
-            // unable to run at all, and that has to read differently from a
-            // handful of honest failures.
+            // Distinguish runner failures from failed checks.
             Say(crashed.ToString());
             Say($"{TallyPrefix}0 passed, 1 failed (the run itself threw)");
         }

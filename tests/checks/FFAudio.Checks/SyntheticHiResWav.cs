@@ -5,14 +5,7 @@ using System.Text;
 
 namespace FFAudio.Checks;
 
-// 24-bit PCM WAV at an arbitrary sample rate.
-//
-// The point of a fixture with meaningful bits below bit 8 is that it is an
-// oracle for the claim this decoder is built on: that a 24-bit source survives
-// to the caller intact. Every decoder that narrows to 16 bits somewhere - and
-// that is most of the ones a phone offers - returns these files with those bits
-// gone, and the loss is invisible unless the fixture puts something there to
-// lose.
+// Generates 24-bit PCM WAV fixtures with meaningful low bits.
 public static class SyntheticHiResWav
 {
     private const int HeaderSize = 44;
@@ -20,9 +13,7 @@ public static class SyntheticHiResWav
     private const int BytesPerSample = 3;
     private const int BytesPerFrame = BytesPerSample * Channels;
 
-    // A counter that walks the whole 24-bit range, so consecutive frames
-    // differ in the low byte as well as the high ones. Truncating this to 16
-    // bits is detectable at almost every frame rather than at a few.
+    // Walk the full 24-bit range so truncation affects nearly every frame.
     public static Func<int, int> Ramp24() => frame => unchecked((frame * 7919) & 0xFFFFFF) - 0x800000;
 
     public static string CreateFile(string directory, string fileName, int sampleRate, int frameCount, Func<int, int> sampleAt)

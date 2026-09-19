@@ -1,25 +1,6 @@
 #!/usr/bin/env bash
-# Cross-compiles a static, LGPL-only FFmpeg for iOS - device arm64 and Apple
-# Silicon simulator arm64 - into native/ios/ffmpeg/prefix/<version>/<variant>/<slice>/.
-#
-# This exists because iOS has no package manager: macOS and Linux find an
-# FFmpeg through pkg-config and link against it, and there is nothing here to
-# find. It is also the only build in this repo where the licensing constraint
-# is not advisory - a phone build links FFmpeg *in*, so the configure line
-# below is the thing that makes the repository build distributable under the
-# LGPL. Callers may opt into other terms; see ../../README.md.
-#
-# It builds a named set of decoders and demuxers rather than all of them:
-# --disable-everything and an explicit list. That is mostly about size, since
-# the result is linked into an app bundle, but it is also the honest statement
-# of what the phone can play. The list lives in ../codec-set.sh, shared with
-# the Android build and with whatever comes after it, and --variant picks
-# between the music-library `slim` set and a `full` one that decodes every
-# audio format FFmpeg has.
-#
-# Slow - tens of minutes for both slices - and idempotent: an existing prefix
-# with a libavformat.a in it is left alone unless --rebuild-ffmpeg is passed.
-# --help lists every option.
+# Cross-compile static FFmpeg for arm64 iOS devices and Apple Silicon
+# simulators. Prefixes are versioned and reusable unless rebuilding is requested.
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -45,12 +26,7 @@ if [ ! -d "$work/ffmpeg-$version" ]; then
     tar -xf "$work/ffmpeg-$version.tar.xz" -C "$work"
 fi
 
-# The decoder and demuxer set, and which variant of it this build gets.
-# --variant full asks for every audio decoder FFmpeg has instead of the
-# music-library list; see ../codec-set.sh, which is also the reason this list
-# is no longer written out twice, once here and once for the other phone.
-# The flags are rendered before anything is configured so a variant that does
-# not exist fails now rather than three slices in.
+# Resolve the shared component set before configuring either slice.
 components=()
 while IFS= read -r flag; do components+=("$flag"); done \
     < <(ffaudio_component_flags "$work/ffmpeg-$version")
@@ -74,14 +50,8 @@ build_slice() {
     mkdir -p "$build"
 
     echo "=== Configuring $ffaudio_variant FFmpeg for $triple ($sdk) ==="
-    # --enable-cross-compile with the host's own clang, steered entirely by
-    # -target and -isysroot: the Apple toolchain is one compiler that
-    # cross-compiles by flag, so there is no separate cross prefix to name.
-    # --disable-network because the façade never lets FFmpeg open a URL -
-    # a streamed track arrives through the façade's own AVIO callbacks, over a
-    # Stream the caller supplies, which is what keeps authentication, range
-    # probing and retry policy in the caller's own HTTP stack instead of
-    # duplicated inside FFmpeg's.
+    # Apple clang cross-compiles via target and sysroot flags. Networking stays
+    # in managed Stream callbacks rather than FFmpeg.
     (
         cd "$build"
         "$work/ffmpeg-$version/configure" \

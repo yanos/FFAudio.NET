@@ -9,9 +9,7 @@ artifacts/
 .vscode/
 .DS_Store
 
-# Built rather than restored, and per-platform: see native/README or the
-# repo README's "Building the natives". A tree of cross-compiled FFmpeg is
-# gigabytes and reproducible from build-ffmpeg.sh.
+# Reproducible native outputs; see README.md's "Building the natives".
 native/artifacts/
 native/*/build/
 native/ios/ffmpeg/

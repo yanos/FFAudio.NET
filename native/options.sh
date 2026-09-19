@@ -1,33 +1,10 @@
 #!/usr/bin/env bash
-# Command-line switches for the build scripts, in one place so every script
-# spells them the same way and --help lists exactly the ones it takes.
-#
-# Sourced rather than run, like codec-set.sh. Each switch sets the environment
-# variable that already meant the same thing, and exports it. The scripts call
-# one another - build-all.sh runs macos/build.sh, which runs host-ffmpeg.sh,
-# which sources codec-set.sh - and an exported variable reaches every level
-# without each one parsing and forwarding the switch again. The variables still
-# work on their own, which is what CI's env: blocks rely on.
-#
-# What the switches add over the variables is that a typo fails. FFAUDIO_STATC=1
-# is ignored without a word and builds the development binary, linked to this
-# machine's FFmpeg - the one that fails on everybody else's. --statc stops.
-#
-# A script sets these before calling ffaudio_parse_options "$@":
-#
-#   ffaudio_usage     its synopsis, e.g. "native/ios/build.sh [options]"
-#   ffaudio_about     a paragraph on what it does
-#   ffaudio_options   the switch names it accepts, space-separated
-#   ffaudio_operands  what its positional arguments are, for --help; empty if
-#                     it takes none, in which case one is an error
-#
-# and afterwards reads its positional arguments - and anything after a bare
-# `--` - out of ffaudio_args.
-#
-# Bash 3.2 compatible, because that is the bash a Mac has: no associative
-# arrays, so the switch table is a pair of case statements.
+# Shared Bash 3.2-compatible option parser. Options are exported as their
+# FFAUDIO_* variables so nested build scripts inherit them. Callers define
+# ffaudio_usage, ffaudio_about, ffaudio_options, and ffaudio_operands, then
+# read positional arguments from ffaudio_args.
 
-# The environment variable a switch sets.
+# Map option names to exported environment variables.
 _ffaudio_option_var() {
     case "$1" in
         static)                  echo FFAUDIO_STATIC ;;
@@ -43,7 +20,7 @@ _ffaudio_option_var() {
     esac
 }
 
-# The value's placeholder in --help, or nothing for an on/off switch.
+# Return a help placeholder, or empty text for flags.
 _ffaudio_option_value() {
     case "$1" in
         variant)                 echo "slim|full" ;;

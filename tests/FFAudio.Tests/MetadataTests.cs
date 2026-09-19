@@ -8,14 +8,7 @@ using Xunit;
 
 namespace FFAudio.Tests;
 
-// What a file says about itself, as opposed to what it decodes to.
-//
-// These exist because the alternative to answering them is that every
-// consumer reaches past the façade into FFmpeg for them, and then has two
-// routes to FFmpeg to build, ship and keep in step - which is the outcome
-// this library exists to prevent. Flower will keep reading tags with TagLib#
-// and that is fine; a general audio library that decodes a file and cannot
-// say its title is one nobody adopts.
+// Metadata behavior independent of decoded PCM.
 [Trait("Category", "RequiresNative")]
 public class MetadataTests : IDisposable
 {
@@ -50,8 +43,7 @@ public class MetadataTests : IDisposable
         Assert.Empty(decoder.Tags);
     }
 
-    // The bytes, unaltered. A façade that re-encoded or rescaled cover art
-    // would be making a decision that belongs to whatever is going to draw it.
+    // Cover art must be returned without transcoding or rescaling.
     [Fact]
     public void Cover_art_comes_back_exactly_as_the_file_holds_it()
     {
@@ -64,17 +56,7 @@ public class MetadataTests : IDisposable
         Assert.Equal(SyntheticTaggedAiff.CoverPng(), art.Bytes);
     }
 
-    // Read out of the PNG's own header rather than by decoding it, which is
-    // the only route available: the shipped FFmpeg is audio-only and has no
-    // decoder that could size a picture. That parse is also what keeps
-    // avformat_find_stream_info from giving up on the art stream and warning
-    // "Could not find codec parameters ... unspecified size" on every
-    // art-bearing file opened - so a zero here is the noise coming back.
-    //
-    // Worth knowing about this assertion: a development build linked against
-    // a full FFmpeg gets these dimensions from find_stream_info regardless, so
-    // it is the slim builds - the phones, and CI's static desktop ones - where
-    // this genuinely guards the parser.
+    // Audio-only builds read dimensions directly from the PNG header.
     [Fact]
     public void Cover_art_reports_the_dimensions_in_the_image_header()
     {
@@ -87,8 +69,7 @@ public class MetadataTests : IDisposable
         Assert.Equal(1, art.Height);
     }
 
-    // Null rather than an exception: most music files have no embedded art,
-    // and a caller asking is not making a mistake.
+    // Missing cover art is an ordinary null result.
     [Fact]
     public void A_file_with_no_cover_art_says_so_without_throwing()
     {
@@ -97,8 +78,7 @@ public class MetadataTests : IDisposable
         Assert.Null(decoder.TryReadCoverArt());
     }
 
-    // The whole point of the layout string: `channels` is a number, and a
-    // number cannot say which channel is which.
+    // Channel count alone cannot describe channel order.
     [Fact]
     public void The_layout_describes_the_pcm_being_delivered()
     {
@@ -108,8 +88,7 @@ public class MetadataTests : IDisposable
         Assert.Equal("stereo", stereo.Format.ChannelLayout);
     }
 
-    // Delivered, not source: a caller that asked for a downmix has to be told
-    // about the channels it is going to get, not the ones the file had.
+    // Report the delivered layout after downmixing.
     [Fact]
     public void A_downmix_reports_the_layout_it_produces_not_the_one_it_read()
     {
@@ -133,9 +112,7 @@ public class MetadataTests : IDisposable
         Assert.Equal("wav", wav.Format.Container);
     }
 
-    // Metadata is answered off the container, so it has to work on a stream
-    // the caller supplied as much as on a path - that is the overload the
-    // streaming half of this library exists for.
+    // Metadata must work through the managed Stream path.
     [Fact]
     public void A_stream_carries_its_metadata_the_same_way_a_path_does()
     {
@@ -146,9 +123,7 @@ public class MetadataTests : IDisposable
         Assert.NotNull(decoder.TryReadCoverArt());
     }
 
-    // Reading tags must not disturb the decode. They come out of the format
-    // context rather than the packet stream, so asking mid-track is a
-    // question about the file and not a seek.
+    // Reading tags must not advance or seek the packet stream.
     [Fact]
     public void Asking_for_tags_mid_decode_does_not_disturb_the_audio()
     {

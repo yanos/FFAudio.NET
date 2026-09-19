@@ -1,15 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
-  <!-- A check runner, not an app, and deliberately the twin of
-       FFAudio.Checks.iOS: the two runs are only worth comparing if the only
-       difference between them is the platform, so when they disagree the
-       disagreement is the finding.
-
-       It launches, runs FFAudio.Checks against the real Android runtime,
-       writes one line per check and a final tally, and leaves the same text
-       on screen so a run on a physical phone is readable without a cable.
-       tests/checks/FFAudio.Checks.Android/run.sh drives it on an emulator and turns the
-       tally into an exit code. -->
+  <!-- Minimal Android host for the shared runtime checks. -->
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
@@ -23,13 +14,7 @@
     <AndroidPackageFormat>apk</AndroidPackageFormat>
     <AndroidEnableProfiledAot>False</AndroidEnableProfiledAot>
 
-    <!-- Fast Deployment off, in every configuration. It keeps the managed
-         assemblies out of the APK and pushes them over adb as a separate
-         step, which `dotnet build -t:Run` does and `adb install` does not -
-         so a hand-installed Debug APK aborts at startup with "No assemblies
-         found ... Assuming this is part of Fast Deployment". The driver
-         script installs the APK itself, deliberately, so that what runs is
-         the artifact rather than a developer's working tree. -->
+    <!-- adb installs the APK directly, so it must contain managed assemblies. -->
     <EmbedAssembliesIntoApk>true</EmbedAssembliesIntoApk>
   </PropertyGroup>
 
@@ -37,20 +22,7 @@
     <ProjectReference Include="..\FFAudio.Checks\FFAudio.Checks.csproj" />
   </ItemGroup>
 
-  <!-- The façade, one .so per ABI. This is the whole reason an Android run
-       checks anything: without it Native.Resolve finds nothing, the first
-       check fails and the rest are not attempted.
-
-       All three ABIs, because which one is exercised is a property of the
-       hardware rather than a choice: an emulator on Apple silicon is
-       arm64-v8a, one on a CI runner is x86_64, and armeabi-v7a is what an
-       older phone would load. Built by native/android/build.sh.
-
-       With $(FFAudioPackageVersion) set, none of this is declared and
-       FFAudio.NET.Android brings the same three instead, through its own
-       buildTransitive .targets - the iOS runner's arrangement, for the same
-       reason: declaring both would put two libffaudio.so files in one APK,
-       and whichever won would be an accident. -->
+  <!-- Use tree natives directly, or let the platform package inject them. -->
   <ItemGroup Condition="'$(FFAudioPackageVersion)' != ''">
     <PackageReference Include="FFAudio.NET.Android" Version="$(FFAudioPackageVersion)" />
   </ItemGroup>

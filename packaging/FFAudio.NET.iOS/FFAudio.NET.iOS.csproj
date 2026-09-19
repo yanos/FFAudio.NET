@@ -6,24 +6,13 @@
     <PayloadProbe>$(MSBuildThisFileDirectory)../../native/artifacts/ios/ios-device/ffaudio.framework/ffaudio</PayloadProbe>
   </PropertyGroup>
 
-  <!-- buildTransitive rather than build, so the NativeReference reaches an app
-       that references this through another project rather than directly -
-       which is the normal arrangement: the app references its own shared
-       library, and that is what took the dependency.
-
-       The folder has to name a platform version - NuGet refuses a bare
-       net10.0-ios - and it names the framework's own deployment target, 12.2.
-       A project targeting a later iOS consumes it; the compatibility runs that
-       way round. -->
+  <!-- Propagate NativeReference transitively at the framework's iOS 12.2 floor. -->
   <ItemGroup>
     <None Include="buildTransitive/FFAudio.NET.iOS.targets"
           Pack="true" PackagePath="buildTransitive/net10.0-ios12.2/" />
   </ItemGroup>
 
-  <!-- The frameworks themselves, packed as ordinary files: every file in the
-       bundle, since a framework is a directory and NuGet packs files. The
-       recursive wildcard keeps _CodeSignature and Info.plist, both of which
-       have to be there for the framework to be usable. -->
+  <!-- Preserve every framework bundle file, including signatures and Info.plist. -->
   <ItemGroup>
     <None Include="../../native/artifacts/ios/**/*"
           Pack="true" PackagePath="native/ios/" />

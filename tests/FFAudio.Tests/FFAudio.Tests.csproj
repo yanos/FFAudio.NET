@@ -7,19 +7,14 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.8.1" />
-    <!-- xunit.v3.mtp-off, not plain xunit.v3: this runs through the classic
-         VSTest `dotnet test` flow, which the plain package's Microsoft Testing
-         Platform entry point does not serve. -->
+    <!-- Use the classic VSTest `dotnet test` flow. -->
     <PackageReference Include="xunit.v3.mtp-off" Version="3.2.2" />
     <PackageReference Include="xunit.runner.visualstudio" Version="3.1.5" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="../../src/FFAudio.NET/FFAudio.NET.csproj" />
-    <!-- For SyntheticHiResWav, which lives there rather than here because the
-         phones need it too and a fixture generated in-process is the only
-         kind a phone can have - there is no encoder on the other side to make
-         one with. -->
+    <!-- Reuse synthetic fixtures and checks shared with mobile runners. -->
     <ProjectReference Include="../checks/FFAudio.Checks/FFAudio.Checks.csproj" />
   </ItemGroup>
 </Project>

@@ -5,17 +5,12 @@ using System.Runtime.InteropServices;
 
 namespace FFAudio
 {
-    // P/Invoke for native/ffaudio.h. Nothing above this file knows FFmpeg
-    // exists; nothing in it knows anything about FFmpeg either, because the
-    // façade's whole purpose is that its ABI is eight functions over ints and
-    // byte buffers. See that header for why.
+    // P/Invoke bindings for the stable ABI in native/ffaudio.h.
     internal static class Native
     {
         internal const string Library = "ffaudio";
 
-        // Must match FFAUDIO_ABI_VERSION. Checked once at load, because
-        // the failure mode of a mismatched library is a struct read at the
-        // wrong offsets rather than an error.
+        // Must match FFAUDIO_ABI_VERSION.
         internal const int ExpectedAbiVersion = 1;
 
         internal const int Ok = 0;
@@ -27,19 +22,8 @@ namespace FFAudio
         internal const int NotPresent = ErrorBase - 6;
         internal const int Truncated = ErrorBase - 7;
 
-        // A module initializer rather than this class's static constructor,
-        // which is where it was and which worked everywhere except the one
-        // platform that needs it most. A P/Invoke has no body for a type
-        // initializer to run in front of, and Mono on iOS resolves the library
-        // for the stub before it runs the declaring type's cctor - so the
-        // resolver was registered by the very call that had already failed
-        // with DllNotFoundException. The framework loaded fine when asked
-        // directly; nothing was ever asking. Registering at module load has no
-        // such ordering to get wrong.
-        // CA2255 says a module initializer belongs in an application rather
-        // than a library, whose author cannot know when it runs. Here that is
-        // the point: it must run before any P/Invoke in this assembly, and
-        // there is no earlier hook a library can offer.
+        // Mono may resolve an iOS P/Invoke before the declaring type's static
+        // constructor, so the resolver must be registered at module load.
 #pragma warning disable CA2255
         [System.Runtime.CompilerServices.ModuleInitializer]
         internal static void RegisterResolver()
@@ -48,15 +32,8 @@ namespace FFAudio
         }
 #pragma warning restore CA2255
 
-        // The façade is not on a default search path in any of the three
-        // situations that matter - a dev build reading it out of
-        // native/artifacts/, a test run, and a consuming app - so each is named
-        // rather than left to the loader. FFAUDIO_LIBRARY is first so a bisect
-        // against a differently-built FFmpeg needs no rebuild.
-        //
-        // The last resort is TryLoad by plain name, which is what picks up a
-        // NuGet's own runtimes/<rid>/native/ payload: the host copies that
-        // beside the consumer's binary, so by then it is simply there.
+        // Prefer FFAUDIO_LIBRARY, then platform-specific locations, then the
+        // default loader path used by NuGet runtime assets.
         private static IntPtr Resolve(string name, Assembly assembly, DllImportSearchPath? path)
         {
             if (name != Library)
@@ -66,12 +43,7 @@ namespace FFAudio
                 && NativeLibrary.TryLoad(explicitPath, out var fromEnvironment))
                 return fromEnvironment;
 
-            // iOS ships the façade as an embedded framework, whose binary sits
-            // at a nested path the loader is never told about: .NET-for-iOS
-            // resolves a P/Invoke by dlopen-ing the DllImport string, which
-            // matches nothing here even though the app's own load commands
-            // name the framework. Every consumer on iOS has this problem, and
-            // none of them should have to know about it.
+            // .NET for iOS does not resolve DllImport names inside embedded frameworks.
             if (OperatingSystem.IsIOS())
             {
                 var framework = Path.Combine(AppContext.BaseDirectory, "Frameworks", "ffaudio.framework", "ffaudio");
@@ -98,13 +70,7 @@ namespace FFAudio
                 : OperatingSystem.IsMacOS() ? "macos"
                 : "linux";
 
-            // Walking up to the repo root is a development convenience for
-            // this repo's own tests, which run against whatever
-            // native/build-all.sh last produced. A consuming app finds the
-            // library beside itself on the first candidate and never looks
-            // further. Seven levels is what the deepest of those needs:
-            // tests/checks/<runner>/bin/<configuration>/<tfm>/ is six below
-            // the repo root, and the walk starts at the directory itself.
+            // Search upward for native/artifacts during repository test runs.
             var repoRelative = Path.Combine("native", "artifacts", platform, file);
             var walked = new string[7];
             var directory = baseDirectory;
