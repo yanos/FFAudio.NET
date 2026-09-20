@@ -79,13 +79,14 @@ Native outputs are written to `native/artifacts/<platform>/`.
 
 ## Decode a file
 
-`Read` fills the buffer with interleaved samples and returns `0` at the end of
-the file.
+`Read` fills the buffer with interleaved float32 samples by default and returns
+`0` at the end of the file. Pass a `SampleFormat` explicitly to request S16,
+packed S24, or S32 instead.
 
 ```csharp
 using FFAudio;
 
-using var decoder = Decoder.OpenPath("track.flac", SampleFormat.S16);
+using var decoder = Decoder.OpenPath("track.flac");
 
 var buffer = new byte[16384];
 int read;
@@ -100,7 +101,6 @@ either value at `0` to use the source value.
 // 48 kHz stereo float output
 using var decoder = Decoder.OpenPath(
     "track.mp3",
-    SampleFormat.F32,
     sampleRate: 48000,
     channels: 2);
 ```
@@ -110,7 +110,7 @@ using var decoder = Decoder.OpenPath(
 ```csharp
 using System.Runtime.InteropServices;
 
-using var decoder = Decoder.OpenPath("track.wav", SampleFormat.F32);
+using var decoder = Decoder.OpenPath("track.wav");
 
 using var pcm = new MemoryStream();
 var buffer = new byte[65536];

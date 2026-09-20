@@ -130,8 +130,10 @@ namespace FFAudio
                     Native.Ok);
         }
 
-        // Zero sampleRate or channels preserves the corresponding source value.
-        public static Decoder OpenPath(string path, SampleFormat format, int sampleRate = 0, int channels = 0)
+        // Float32 is the default delivery format. Zero sampleRate or channels
+        // preserves the corresponding source value.
+        public static Decoder OpenPath(string path, SampleFormat format = SampleFormat.F32,
+                                       int sampleRate = 0, int channels = 0)
         {
             EnsureAbi();
             var rc = Native.OpenPath(path, (int)format, sampleRate, channels, out var handle);
@@ -143,7 +145,7 @@ namespace FFAudio
 
         // formatHint is an FFmpeg demuxer name (for example, "mp4"). A rejected
         // hint on a seekable stream falls back to probing from the beginning.
-        public static Decoder OpenStream(Stream stream, SampleFormat format,
+        public static Decoder OpenStream(Stream stream, SampleFormat format = SampleFormat.F32,
                                                int sampleRate = 0, int channels = 0,
                                                string? formatHint = null, bool ownsStream = false,
                                                ILogger? logger = null)

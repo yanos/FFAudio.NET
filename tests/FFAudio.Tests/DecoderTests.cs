@@ -177,6 +177,29 @@ public class DecoderTests : IDisposable
         Assert.Equal(0, differing);
     }
 
+    [Fact]
+    public void Paths_deliver_F32_by_default()
+    {
+        using var decoder = Decoder.OpenPath(HiResFixture());
+        var pcm = DecodeAll(decoder);
+
+        Assert.Equal(SampleFormat.F32, decoder.Format.SampleFormat);
+        Assert.Equal(8, decoder.Format.BytesPerFrame);
+        Assert.Equal(Frames * 8, pcm.Length);
+    }
+
+    [Fact]
+    public void Streams_deliver_F32_by_default()
+    {
+        using var source = File.OpenRead(HiResFixture());
+        using var decoder = Decoder.OpenStream(source);
+        var pcm = DecodeAll(decoder);
+
+        Assert.Equal(SampleFormat.F32, decoder.Format.SampleFormat);
+        Assert.Equal(8, decoder.Format.BytesPerFrame);
+        Assert.Equal(Frames * 8, pcm.Length);
+    }
+
     // Advertised frame widths must match the bytes actually emitted.
     [Theory]
     [InlineData(SampleFormat.S16, 2)]
