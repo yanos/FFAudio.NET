@@ -16,3 +16,4 @@ native/ios/ffmpeg/
 native/android/ffmpeg/
 native/macos/ffmpeg/
 native/linux/ffmpeg/
+native/windows/ffmpeg/

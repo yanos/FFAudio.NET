@@ -56,12 +56,17 @@ native/build-all.sh --help          # every option
 ```
 
 macOS and iOS require a Mac, Linux requires a Linux host, and Android requires
-an NDK, passed with `--ndk PATH`. On Windows, use PowerShell and MSVC:
+an NDK, passed with `--ndk PATH`. On Windows, use PowerShell, MSVC and
+[MSYS2](https://www.msys2.org), whose bash runs FFmpeg's configure:
 
 ```powershell
+C:\msys64\usr\bin\bash.exe -lc "pacman -S --needed --noconfirm make diffutils nasm"
 native/windows/build.ps1
 native/windows/build.ps1 -Help
 ```
+
+It builds FFmpeg from source as shared DLLs, then `ffaudio.dll` against them;
+`-Prefix` links an FFmpeg of your own instead.
 
 Development builds on macOS and Linux use the FFmpeg found through
 `pkg-config`. Use `--static` for a self-contained build intended for
@@ -224,6 +229,11 @@ native/build-all.sh --rebuild-ffmpeg --static macos
 native/build-all.sh --rebuild-ffmpeg ios
 ```
 
+```powershell
+# Windows
+native/windows/build.ps1 -RebuildFFmpeg
+```
+
 Replace `macos` with `linux` or `ios` with `android` as needed. Android also
 needs `--ndk PATH`. `--rebuild-ffmpeg` is important because the scripts
 otherwise reuse an existing FFmpeg build of the same version and variant.
@@ -252,11 +262,13 @@ with incompatible licenses; FFmpeg marks the resulting binary as
 unredistributable, so it must not be included in a distributed package or
 application.
 
-Multiple configure flags can be separated by spaces in `--configure-flags`. The override applies to source builds for
-macOS, Linux, iOS, and Android. Windows uses a pinned prebuilt FFmpeg; to use a
-different configuration, build FFmpeg separately and pass its prefix to:
+Multiple configure flags can be separated by spaces in `--configure-flags`,
+which applies to every source build. On Windows the same options are
+`-ConfigureFlags`, `-AllowNonLgpl`, `-Variant` and `-FFmpegVersion`, and an
+FFmpeg built some other way can be linked by passing its prefix:
 
 ```powershell
+native/windows/build.ps1 -RebuildFFmpeg -AllowNonLgpl -ConfigureFlags "--enable-gpl"
 native/windows/build.ps1 -Prefix C:\path\to\ffmpeg
 ```
 

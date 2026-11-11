@@ -49,7 +49,7 @@ _ffaudio_option_help() {
         ffmpeg-version)
             echo "The FFmpeg release to build from source (default 9.0.2). Each"
             echo "version is kept in its own folder, so switching is a relink"
-            echo "once it has been built. Windows always uses its pinned download." ;;
+            echo "once it has been built." ;;
         configure-flags)
             echo "Extra FFmpeg configure flags, space-separated, e.g."
             echo "--configure-flags=\"--enable-gpl\"." ;;

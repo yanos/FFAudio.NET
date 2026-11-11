@@ -12,16 +12,18 @@ target_include_directories(ffaudio PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 if(MSVC)
     # Windows receives an explicit FFmpeg prefix instead of using pkg-config.
     if(NOT FFAUDIO_PREFIX)
-        message(FATAL_ERROR "FFAUDIO_PREFIX must name an FFmpeg prefix (include/ + lib/) - run native/ffmpeg/windows/build.ps1 rather than cmake directly")
+        message(FATAL_ERROR "FFAUDIO_PREFIX must name an FFmpeg prefix (include/, and lib/ or bin/) - run native/windows/build.ps1 rather than cmake directly")
     endif()
 
     target_include_directories(ffaudio PRIVATE "${FFAUDIO_PREFIX}/include")
 
-    # Link only the four FFmpeg libraries used by the façade.
+    # Link only the four FFmpeg libraries used by the façade. An MSVC-built
+    # FFmpeg installs its import libraries beside the DLLs in bin/; other
+    # distributions put them in lib/.
     foreach(component avformat avcodec avutil swresample)
         find_library(FFMPEG_${component}_LIBRARY
             NAMES ${component}
-            PATHS "${FFAUDIO_PREFIX}/lib"
+            PATHS "${FFAUDIO_PREFIX}/lib" "${FFAUDIO_PREFIX}/bin"
             NO_DEFAULT_PATH
             REQUIRED)
         target_link_libraries(ffaudio PRIVATE "${FFMPEG_${component}_LIBRARY}")

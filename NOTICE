@@ -18,22 +18,35 @@ by the LGPL distribution guidance below.
 Full license text: https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html
 Source: https://ffmpeg.org/download.html
 
-The obligation differs by platform, and both halves are met here:
+Every binary this project distributes builds FFmpeg from source: the
+unmodified release tarball https://ffmpeg.org/releases/ffmpeg-<version>.tar.xz,
+where <version> is ffaudio_ffmpeg_version in native/codec-set.sh, configured
+with the component list in that same file (selected by FFAUDIO_VARIANT) and
+the flags in the platform's script below. That tarball and those scripts, at
+the tag of the release that shipped the binary, are its complete
+corresponding source.
 
-  Desktop (macOS, Linux, Windows). FFmpeg remains a set of separate,
-  dynamically linked libraries that an end user can replace with their own
-  build. native/windows/build.ps1 downloads a pinned LGPL binary
-  distribution; native/macos/build.sh and native/linux/build.sh link against
-  whatever LGPL-only FFmpeg pkg-config is pointed at.
+How FFmpeg is linked, and how an end user replaces it:
 
-  Mobile (iOS, Android). FFmpeg is linked statically into the façade, because
-  a phone has no package manager to obtain one from. Replaceability is
-  therefore met by relink route rather than by dynamic linking:
-  native/ios/build-ffmpeg.sh and native/android/build-ffmpeg.sh contain the
-  exact FFmpeg version, and the exact component list they configure it with is
-  native/codec-set.sh, selected by FFAUDIO_VARIANT. Rebuilding the binary from
-  an FFmpeg of the user's own choosing is those scripts plus the corresponding
-  build.sh.
+  Windows. FFmpeg is a set of separate DLLs (avformat-*.dll, avcodec-*.dll,
+  avutil-*.dll, swresample-*.dll) beside ffaudio.dll, built shared with
+  MSVC by native/windows/build-ffmpeg.sh, which native/windows/build.ps1
+  runs. Replacing them with an ABI-compatible build is enough.
+
+  macOS, Linux, iOS and Android. FFmpeg is linked statically into the
+  façade (libffaudio.dylib, libffaudio.so, ffaudio.framework), which is
+  itself a separate shared library, so replaceability is met by relinking
+  it rather than by FFmpeg being dynamic: native/host-ffmpeg.sh (run by
+  native/macos/build.sh and native/linux/build.sh under --static),
+  native/ios/build-ffmpeg.sh and native/android/build-ffmpeg.sh configure
+  FFmpeg, and the corresponding build.sh links the façade against it.
+  Rebuilding the façade from an FFmpeg of the user's own choosing is those
+  scripts with --ffmpeg-version or --configure-flags (or, on macOS and
+  Linux, without --static and with pkg-config pointed at their own FFmpeg),
+  and dropping the result in place of the shipped library.
+
+  The development builds of macOS and Linux (without --static) link
+  whatever FFmpeg pkg-config finds and are not distributed.
 
   A binary can also be asked directly, which is what a person holding one
   actually has: ffaudio_ffmpeg_configuration returns the configure line
@@ -43,4 +56,4 @@ The obligation differs by platform, and both halves are met here:
   how it was meant to be built.
 
 Anyone distributing a binary built from this repository is responsible for
-carrying that source offer onward.
+carrying this notice, the LGPL's text and the means to that source onward.

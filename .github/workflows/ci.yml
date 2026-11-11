@@ -78,7 +78,20 @@ jobs:
           brew install ffmpeg
           native/macos/build.sh
 
-      # The script downloads the pinned LGPL Windows build.
+      # The runner's MSYS2 builds FFmpeg (build-ffmpeg.sh) with MSVC.
+      - name: Install MSYS2's build tools (Windows)
+        if: matrix.platform == 'windows'
+        run: C:\msys64\usr\bin\bash.exe -lc "pacman -S --needed --noconfirm make diffutils nasm"
+        shell: pwsh
+
+      - name: Cache the shared FFmpeg (Windows)
+        if: matrix.platform == 'windows'
+        uses: actions/cache@v4
+        with:
+          path: native/windows/ffmpeg/prefix
+          key: ffmpeg-windows-${{ hashFiles('native/windows/build-ffmpeg.sh', 'native/codec-set.sh') }}
+
+      # Builds FFmpeg from source, then the façade against it.
       - name: Build ffaudio (Windows)
         if: matrix.platform == 'windows'
         run: ./native/windows/build.ps1

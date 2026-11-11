@@ -4,15 +4,41 @@ Builds ffaudio.dll for Windows into native/artifacts/windows/, with the four
 FFmpeg DLLs it imports beside it.
 
 .DESCRIPTION
-Downloads a pinned, checksummed LGPL FFmpeg 9.0.2 build and links the facade
-against it, unless -Prefix names an FFmpeg of your own. Windows does not build
-FFmpeg from source, so the FFmpeg options of the shell scripts (--variant,
---configure-flags and the rest) do not apply here; to change how FFmpeg is
-configured, build it yourself and pass its prefix.
+Builds a shared LGPL FFmpeg from source with MSVC - the release, version and
+component set of native/codec-set.sh, as every other platform does - by
+running native/windows/build-ffmpeg.sh in MSYS2's bash, then links the façade
+against it. -Prefix names an FFmpeg of your own instead.
+
+Needs Visual Studio (or its Build Tools) with the C++ workload, CMake, and
+MSYS2 with make, diffutils and nasm:
+    C:\msys64\usr\bin\bash.exe -lc "pacman -S --needed --noconfirm make diffutils nasm"
+A Visual Studio developer environment is entered for you when cl.exe is not
+already on PATH.
 
 .PARAMETER Prefix
-An FFmpeg prefix to build against - with include/, lib/ and bin/ - instead of
-the pinned download.
+An FFmpeg prefix to build against - with include/, and import libraries and
+DLLs in lib/ or bin/ - instead of building one.
+
+.PARAMETER Variant
+Which decoders the FFmpeg built from source gets: slim (the default) is a
+music library, full is every audio decoder. [FFAUDIO_VARIANT]
+
+.PARAMETER FFmpegVersion
+The FFmpeg release to build (default: codec-set.sh's). [FFAUDIO_FFMPEG_VERSION]
+
+.PARAMETER ConfigureFlags
+Extra FFmpeg configure flags, space-separated. [FFAUDIO_FFMPEG_CONFIGURE_FLAGS]
+
+.PARAMETER RebuildFFmpeg
+Rebuild FFmpeg even though a build of it already exists. Needed after
+changing -ConfigureFlags. [FFAUDIO_REBUILD_FFMPEG]
+
+.PARAMETER AllowNonLgpl
+Allow an FFmpeg that configures as GPL or nonfree. See the licensing section
+of README.md. [FFAUDIO_ALLOW_NON_LGPL]
+
+.PARAMETER Msys2
+Where MSYS2 is installed (default C:\msys64). [FFAUDIO_MSYS2]
 
 .PARAMETER Configuration
 The CMake build configuration. Release by default.
@@ -27,12 +53,19 @@ native/windows/build.ps1
 native/windows/build.ps1 -Prefix C:\my\own\ffmpeg
 #>
 
-# Build ffaudio.dll against a pinned, replaceable LGPL FFmpeg distribution.
+# Build ffaudio.dll against a shared LGPL FFmpeg built from source here.
 # Disable positional binding so stray arguments fail instead of becoming Prefix.
 [CmdletBinding(PositionalBinding = $false)]
 param(
-    # Optional FFmpeg prefix containing include/, lib/, and bin/.
+    # Optional FFmpeg prefix containing include/ and lib/ or bin/.
     [string]$Prefix,
+    [ValidateSet("slim", "full")]
+    [string]$Variant,
+    [string]$FFmpegVersion,
+    [string]$ConfigureFlags,
+    [switch]$RebuildFFmpeg,
+    [switch]$AllowNonLgpl,
+    [string]$Msys2,
     [string]$Configuration = "Release",
     [switch]$Help,
     [Parameter(ValueFromRemainingArguments = $true)]
@@ -55,44 +88,87 @@ $root = Resolve-Path (Join-Path $here "../..")
 $build = Join-Path $here "build"
 $out = Join-Path $root "native/artifacts/windows"
 
-# Pin and checksum the same FFmpeg release used by source builds. The asset is
-# mirrored here because upstream daily builds are pruned. When updating it,
-# also update ffaudio_ffmpeg_version in ../codec-set.sh.
-$release = "ffmpeg-win64-9.0.2"
-$asset = "ffmpeg-n9.0.1-84-g946fcce07b-win64-lgpl-shared-9.0.zip"
-$sha256 = "a2a50423b631cb51e91c2668c16a4807197c50d1f5fc56dd4516ca188a0d731f"
+# MSVC on PATH, for FFmpeg's configure (CMake finds Visual Studio itself).
+function Enter-Msvc {
+    if (Get-Command cl.exe -ErrorAction SilentlyContinue) {
+        return
+    }
+    $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
+    if (-not (Test-Path $vswhere)) {
+        throw "No cl.exe on PATH and no vswhere.exe to find one - install Visual Studio or its Build Tools, with the C++ workload"
+    }
+    $vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+    if (-not $vs) {
+        throw "No Visual Studio with the x64 C++ tools - install the C++ workload"
+    }
+    Write-Host "==> Entering the Visual Studio developer environment ($vs)"
+    Import-Module (Join-Path $vs "Common7\Tools\Microsoft.VisualStudio.DevShell.dll")
+    Enter-VsDevShell -VsInstallPath $vs -SkipAutomaticLocation -DevCmdArguments "-arch=x64 -host_arch=x64" | Out-Null
+}
 
 if (-not $Prefix) {
-    $downloads = Join-Path $here "ffmpeg"
-    $zip = Join-Path $downloads $asset
-    $Prefix = Join-Path $downloads ([IO.Path]::GetFileNameWithoutExtension($asset))
-
-    if (-not (Test-Path $Prefix)) {
-        New-Item -ItemType Directory -Force -Path $downloads | Out-Null
-
-        if (-not (Test-Path $zip)) {
-            $url = "https://github.com/yanos/FFAudio.NET/releases/download/$release/$asset"
-            Write-Host "==> Downloading $asset"
-            # Disable the expensive legacy progress renderer in CI.
-            $previousProgress = $ProgressPreference
-            $ProgressPreference = "SilentlyContinue"
-            try {
-                Invoke-WebRequest -Uri $url -OutFile $zip
-            }
-            finally {
-                $ProgressPreference = $previousProgress
-            }
-        }
-
-        $actual = (Get-FileHash -Path $zip -Algorithm SHA256).Hash.ToLowerInvariant()
-        if ($actual -ne $sha256) {
-            Remove-Item $zip -Force
-            throw "$asset hashes $actual, not the pinned $sha256 - refusing to build against it"
-        }
-
-        Write-Host "==> Unpacking"
-        Expand-Archive -Path $zip -DestinationPath $downloads -Force
+    # Hand the options to build-ffmpeg.sh the way the shell scripts hand
+    # them to each other: as their FFAUDIO_* variables.
+    if ($Variant) {
+        $env:FFAUDIO_VARIANT = $Variant
     }
+    if ($FFmpegVersion) {
+        $env:FFAUDIO_FFMPEG_VERSION = $FFmpegVersion
+    }
+    if ($ConfigureFlags) {
+        $env:FFAUDIO_FFMPEG_CONFIGURE_FLAGS = $ConfigureFlags
+    }
+    if ($RebuildFFmpeg) {
+        $env:FFAUDIO_REBUILD_FFMPEG = "1"
+    }
+    if ($AllowNonLgpl) {
+        $env:FFAUDIO_ALLOW_NON_LGPL = "1"
+    }
+
+    if (-not $Msys2) {
+        $Msys2 = $env:FFAUDIO_MSYS2
+    }
+    if (-not $Msys2) {
+        $Msys2 = "C:\msys64"
+    }
+    $bash = Join-Path $Msys2 "usr\bin\bash.exe"
+    if (-not (Test-Path $bash)) {
+        throw "No MSYS2 bash at $bash - install MSYS2 (msys2.org), or pass -Msys2 with where it is"
+    }
+
+    Enter-Msvc
+
+    # inherit: keep the developer environment's PATH, so configure finds cl.
+    # CHERE_INVOKING: start the login shell here rather than in ~.
+    $env:MSYS2_PATH_TYPE = "inherit"
+    $env:CHERE_INVOKING = "1"
+    $env:MSYSTEM = "MSYS"
+    Write-Host "==> Building FFmpeg (native/windows/build-ffmpeg.sh)"
+    Push-Location $root
+    try {
+        & $bash -lc "native/windows/build-ffmpeg.sh"
+        if ($LASTEXITCODE -ne 0) {
+            throw "build-ffmpeg.sh failed"
+        }
+    }
+    finally {
+        Pop-Location
+    }
+
+    # Where build-ffmpeg.sh put it: codec-set.sh's ffaudio_prefix_root.
+    $version = $env:FFAUDIO_FFMPEG_VERSION
+    if (-not $version) {
+        $codecSet = Get-Content (Join-Path $here "../codec-set.sh") -Raw
+        if ($codecSet -notmatch 'ffaudio_ffmpeg_version="\$\{FFAUDIO_FFMPEG_VERSION:-([^}]+)\}"') {
+            throw "Could not read the FFmpeg version out of codec-set.sh - its ffaudio_ffmpeg_version line must have changed"
+        }
+        $version = $Matches[1]
+    }
+    $variantName = $env:FFAUDIO_VARIANT
+    if (-not $variantName) {
+        $variantName = "slim"
+    }
+    $Prefix = Join-Path $here "ffmpeg/prefix/$version/$variantName/x64"
 }
 
 if (-not (Test-Path (Join-Path $Prefix "include/libavformat/avformat.h"))) {
@@ -125,6 +201,13 @@ Get-ChildItem $out | ForEach-Object { Write-Host ("  " + $_.Name) }
 $dumpbin = Get-Command dumpbin -ErrorAction SilentlyContinue
 if ($dumpbin) {
     & $dumpbin.Path /exports (Join-Path $out "ffaudio.dll") | Select-String "ffaudio_"
+
+    # What each DLL loads: FFmpeg's own and system DLLs only, so nothing from
+    # the build machine travels with them.
+    Get-ChildItem -Path (Join-Path $out "*.dll") | ForEach-Object {
+        Write-Host "=== $($_.Name) needs ==="
+        & $dumpbin.Path /nologo /dependents $_.FullName | Select-String '^\s+\S+\.dll$' | ForEach-Object { Write-Host ("  " + $_.Line.Trim()) }
+    }
 }
 else {
     Write-Host "(dumpbin not on PATH - exports unchecked)"

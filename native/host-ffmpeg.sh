@@ -18,7 +18,7 @@ set -- "${ffaudio_args[@]+"${ffaudio_args[@]}"}"
 case "$(uname -s)" in
     Darwin) platform=macos ;;
     Linux)  platform=linux ;;
-    *) echo "host-ffmpeg.sh builds for macOS or Linux; this is $(uname -s). Windows links a pinned LGPL download - see native/windows/build.ps1." >&2; exit 1 ;;
+    *) echo "host-ffmpeg.sh builds for macOS or Linux; this is $(uname -s). Windows builds a shared one with native/windows/build.ps1." >&2; exit 1 ;;
 esac
 
 arch="$(uname -m)"
