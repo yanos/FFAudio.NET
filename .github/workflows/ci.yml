@@ -140,9 +140,19 @@ jobs:
           FFAUDIO_REQUIRE_LGPL: 1
 
       # Mobile runners verify embedded-native loading and AOT callbacks at runtime.
+      # iOS is pinned with the Xcode it needs: an unpinned install takes the
+      # newest SDK band's workload, and 27.2 refuses the image's Xcode 27.1.
       - name: Install the mobile workload
         if: matrix.mobile
-        run: dotnet workload install ${{ matrix.platform }}
+        run: |
+          if [ "${{ matrix.platform }}" = ios ]; then
+            if [ -d /Applications/Xcode_27.0.app ]; then
+              echo "DEVELOPER_DIR=/Applications/Xcode_27.0.app/Contents/Developer" >> "$GITHUB_ENV"
+            fi
+            dotnet workload install ios --version 10.0.402
+          else
+            dotnet workload install ${{ matrix.platform }}
+          fi
 
       - name: Cache the cross-compiled FFmpeg
         if: matrix.mobile
@@ -320,9 +330,18 @@ jobs:
         with:
           dotnet-version: 10.0.x
 
+      # Pinned as in the test job.
       - name: Install the mobile workload
         if: matrix.mobile
-        run: dotnet workload install ${{ matrix.platform }}
+        run: |
+          if [ "${{ matrix.platform }}" = ios ]; then
+            if [ -d /Applications/Xcode_27.0.app ]; then
+              echo "DEVELOPER_DIR=/Applications/Xcode_27.0.app/Contents/Developer" >> "$GITHUB_ENV"
+            fi
+            dotnet workload install ios --version 10.0.402
+          else
+            dotnet workload install ${{ matrix.platform }}
+          fi
 
       - uses: actions/download-artifact@v4
         with:
