@@ -33,8 +33,10 @@ jobs:
             platform: windows
             artifact: ffaudio-Windows
             artifact-path: native/artifacts/
+          # Not macos-latest, whose image has Xcode 26 only: the iOS 27
+          # workload needs Xcode 27, which the xcode-27 image carries.
           - name: iOS Simulator
-            os: macos-latest
+            os: xcode-27
             platform: ios
             mobile: true
             artifact: ffaudio-iOS
@@ -142,6 +144,7 @@ jobs:
       # Mobile runners verify embedded-native loading and AOT callbacks at runtime.
       # iOS is pinned with the Xcode it needs: an unpinned install takes the
       # newest SDK band's workload, and 27.2 refuses the image's Xcode 27.1.
+      # 10.0.402 is iOS 27.0, which wants Xcode 27.0.
       - name: Install the mobile workload
         if: matrix.mobile
         run: |
@@ -306,8 +309,10 @@ jobs:
           - name: Windows
             os: windows-latest
             platform: windows
+          # Not macos-latest, whose image has Xcode 26 only: the iOS 27
+          # workload needs Xcode 27, which the xcode-27 image carries.
           - name: iOS Simulator
-            os: macos-latest
+            os: xcode-27
             platform: ios
             mobile: true
           - name: Android emulator
