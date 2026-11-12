@@ -18,8 +18,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Not ubuntu-latest: the shipping libffaudio.so needs the glibc
+          # of the image it was built on, and ubuntu-latest's 26.04 (glibc
+          # 2.43) left 1.0.3 and 1.1.0 unloadable on Ubuntu 24.04 LTS.
           - name: Linux
-            os: ubuntu-latest
+            os: ubuntu-24.04
             platform: linux
             artifact: ffaudio-Linux
             artifact-path: native/artifacts/
@@ -119,7 +122,7 @@ jobs:
           path: |
             native/macos/ffmpeg/prefix
             native/linux/ffmpeg/prefix
-          key: ffmpeg-host-${{ runner.os }}-${{ hashFiles('native/host-ffmpeg.sh', 'native/codec-set.sh') }}
+          key: ffmpeg-host-${{ matrix.os }}-${{ hashFiles('native/host-ffmpeg.sh', 'native/codec-set.sh') }}
 
       # FFmpeg's Linux x86 assembly requires nasm.
       - name: Install nasm (Linux)
@@ -300,8 +303,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # The oldest Linux the package supports, so a native built against
+          # a newer glibc fails to load here instead of in a consumer.
           - name: Linux
-            os: ubuntu-latest
+            os: ubuntu-24.04
             platform: linux
           - name: macOS
             os: macos-latest
