@@ -20,27 +20,17 @@ public class AppDelegate : UIApplicationDelegate
 
     public const string TranscriptName = "ffaudio-checks.log";
 
-    public override UIWindow? Window { get; set; }
+    // The transcript so far, for CheckSceneDelegate's screen, which shows it
+    // whenever it changes.
+    public static string Snapshot { get; private set; } = "";
 
-    private UITextView? _log;
+    public static event Action? TranscriptChanged;
 
+    // The window belongs to CheckSceneDelegate: iOS 27 kills an app that has
+    // not adopted the scene lifecycle at launch. The run does not wait for a
+    // scene, so one that never connects costs the screen and nothing else.
     public override bool FinishedLaunching(UIApplication application, NSDictionary? launchOptions)
     {
-        Window = new UIWindow(UIScreen.MainScreen.Bounds);
-
-        _log = new UITextView(Window.Bounds)
-        {
-            Editable = false,
-            Font = UIFont.FromName("Menlo", 11) ?? UIFont.SystemFontOfSize(11),
-            AutoresizingMask = UIViewAutoresizing.FlexibleWidth | UIViewAutoresizing.FlexibleHeight,
-            Text = "Running...",
-        };
-
-        var root = new UIViewController();
-        root.View!.AddSubview(_log);
-        Window.RootViewController = root;
-        Window.MakeKeyAndVisible();
-
         // Decoding must not block the UI thread and trigger the watchdog.
         Task.Run(RunChecks);
 
@@ -71,7 +61,8 @@ public class AppDelegate : UIApplicationDelegate
                 Console.WriteLine($"could not write the transcript: {unwritable.Message}");
             }
 
-            UIApplication.SharedApplication.InvokeOnMainThread(() => _log!.Text = snapshot);
+            Snapshot = snapshot;
+            TranscriptChanged?.Invoke();
         }
 
         try
