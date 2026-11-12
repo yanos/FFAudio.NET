@@ -64,7 +64,7 @@ public class VersionStampTests
         Assert.Equal(sha, Stamp().Groups["commit"].Value);
     }
 
-    // Numeric versions omit prerelease data; assembly compatibility follows major.
+    // Numeric versions are the release's numbers, without prerelease data.
     [Fact]
     public void The_numeric_versions_follow_the_informational_one()
     {
@@ -73,7 +73,7 @@ public class VersionStampTests
         var minor = int.Parse(match.Groups["minor"].Value);
         var patch = int.Parse(match.Groups["patch"].Value);
 
-        Assert.Equal(new Version(major, 0, 0, 0), Library.GetName().Version);
+        Assert.Equal(new Version(major, minor, patch, 0), Library.GetName().Version);
         Assert.Equal(
             $"{major}.{minor}.{patch}.0",
             Library.GetCustomAttribute<AssemblyFileVersionAttribute>()?.Version);

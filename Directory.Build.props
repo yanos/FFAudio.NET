@@ -13,6 +13,16 @@
     </PackageReference>
   </ItemGroup>
 
+  <!-- The release's numbers as the assembly version, not MinVer's major.0.0.0: that convention
+       spares strong-named .NET Framework libraries binding redirects, which this one is not, and
+       it made every 1.x read 1.0.0.0 wherever an assembly's version is asked (a crash report's
+       module list). -->
+  <Target Name="StampFullAssemblyVersion" AfterTargets="MinVer">
+    <PropertyGroup>
+      <AssemblyVersion>$(MinVerMajor).$(MinVerMinor).$(MinVerPatch).0</AssemblyVersion>
+    </PropertyGroup>
+  </Target>
+
   <!-- Record MinVer's own result so tests can tell it apart from the SDK's 1.0.0 default. -->
   <Target Name="StampMinVerVersion" AfterTargets="MinVer">
     <ItemGroup>
