@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Collections.Generic;
 using System.Linq;
+using System.Runtime.CompilerServices;
 
 using FFAudio.Checks;
 
@@ -435,6 +436,67 @@ public class DecoderTests : IDisposable
 
         Assert.Throws<DecodeException>(() => Decoder.OpenStream(owned, SampleFormat.S16, ownsStream: true));
         Assert.False(owned.CanRead);
+    }
+
+    [Fact]
+    public void A_failed_format_initialization_closes_an_owned_stream()
+    {
+        var source = new MemoryStream(InvalidDurationWav());
+
+        var error = Record.Exception(() => Decoder.OpenStream(source, ownsStream: true));
+
+        Assert.True(error is OverflowException or ArgumentOutOfRangeException, $"Unexpected error: {error}");
+        Assert.False(source.CanRead);
+    }
+
+    [Fact]
+    public void A_failed_format_initialization_releases_a_borrowed_stream()
+    {
+        var source = FailToInitializeBorrowedDecoder();
+
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+        GC.Collect();
+
+        Assert.False(source.IsAlive);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static WeakReference FailToInitializeBorrowedDecoder()
+    {
+        var source = new MemoryStream(InvalidDurationWav());
+        var error = Record.Exception(() => Decoder.OpenStream(source));
+        Assert.True(error is OverflowException or ArgumentOutOfRangeException, $"Unexpected error: {error}");
+        Assert.True(source.CanRead);
+        return new WeakReference(source);
+    }
+
+    // A tiny RF64 file whose declared sample count yields a duration outside
+    // TimeSpan's range. FFmpeg opens it; managed format construction then fails.
+    private static byte[] InvalidDurationWav()
+    {
+        using var stream = new MemoryStream();
+        using var writer = new BinaryWriter(stream);
+        writer.Write("RF64"u8);
+        writer.Write(uint.MaxValue);
+        writer.Write("WAVEds64"u8);
+        writer.Write(28);
+        writer.Write((1UL << 50) + 72);
+        writer.Write(1UL << 50);
+        writer.Write(100000000000000000UL);
+        writer.Write(0);
+        writer.Write("fmt "u8);
+        writer.Write(16);
+        writer.Write((short)1); // PCM
+        writer.Write((short)1); // mono
+        writer.Write(44100);
+        writer.Write(88200);
+        writer.Write((short)2);
+        writer.Write((short)16);
+        writer.Write("data"u8);
+        writer.Write(uint.MaxValue);
+        writer.Write(new byte[1000]);
+        return stream.ToArray();
     }
 
     [Fact]

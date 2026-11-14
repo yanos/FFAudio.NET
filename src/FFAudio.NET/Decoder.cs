@@ -68,30 +68,35 @@ namespace FFAudio
             _ownsStream = ownsStream;
             _self = self;
 
-            var rc = Native.GetFormat(handle, out var format);
-            if (rc != Native.Ok)
+            try
             {
-                Dispose();
-                throw new DecodeException("Could not read the decoded audio format", rc);
+                var rc = Native.GetFormat(handle, out var format);
+                if (rc != Native.Ok)
+                    throw new DecodeException("Could not read the decoded audio format", rc);
+
+                NativeText.ReadPair(
+                    (a, aBytes, b, bBytes) => Native.Names(handle, a, aBytes, b, bBytes),
+                    out var codec, out var container);
+
+                Format = new AudioFormat(
+                    format.SampleRate,
+                    format.Channels,
+                    (SampleFormat)format.SampleFormat,
+                    format.SourceBitDepth,
+                    format.SourceSampleRate,
+                    format.SourceChannels,
+                    format.DurationMs < 0 ? null : TimeSpan.FromMilliseconds(format.DurationMs),
+                    NativeText.ReadString((buffer, bytes) => Native.ChannelLayout(handle, buffer, bytes)),
+                    codec,
+                    container);
             }
-
-            var codec = "";
-            var container = "";
-            NativeText.ReadPair(
-                (a, aBytes, b, bBytes) => Native.Names(handle, a, aBytes, b, bBytes),
-                out codec, out container);
-
-            Format = new AudioFormat(
-                format.SampleRate,
-                format.Channels,
-                (SampleFormat)format.SampleFormat,
-                format.SourceBitDepth,
-                format.SourceSampleRate,
-                format.SourceChannels,
-                format.DurationMs < 0 ? null : TimeSpan.FromMilliseconds(format.DurationMs),
-                NativeText.ReadString((buffer, bytes) => Native.ChannelLayout(handle, buffer, bytes)),
-                codec,
-                container);
+            catch
+            {
+                // Construction can fail after native open (for example, an
+                // unrepresentable duration). No caller can dispose us then.
+                Dispose();
+                throw;
+            }
         }
 
         // True when a compatible native library can be loaded. The result is cached.
