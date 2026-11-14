@@ -1,5 +1,6 @@
 #include "ffaudio.h"
 
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -114,6 +115,13 @@ static void pack_s24(const uint8_t *src, uint8_t *dst, int samples)
 
 static int ensure_buffers(ffaudio_decoder *dec, int frames)
 {
+    // Byte counts and pending offsets must remain representable as int.
+    // Check before multiplying or reusing an existing allocation.
+    if (frames < 0 || dec->swr_bytes_per_frame <= 0 || dec->out_bytes_per_frame <= 0)
+        return FFAUDIO_ERR_ARGUMENT;
+    if (frames > INT_MAX / dec->swr_bytes_per_frame
+        || frames > INT_MAX / dec->out_bytes_per_frame)
+        return FFAUDIO_ERR_NO_MEMORY;
     if (frames <= dec->scratch_frames)
         return FFAUDIO_OK;
 
@@ -457,6 +465,11 @@ static int finish_open(ffaudio_decoder *dec)
     int source_channels = dec->codec->ch_layout.nb_channels;
     int out_rate = dec->requested_rate > 0 ? dec->requested_rate : source_rate;
     int out_channels = dec->requested_channels > 0 ? dec->requested_channels : source_channels;
+
+    if (source_rate <= 0 || source_channels <= 0)
+        return AVERROR_INVALIDDATA;
+    if (out_channels <= 0 || out_channels > INT_MAX / 4)
+        return FFAUDIO_ERR_ARGUMENT;
 
     av_channel_layout_default(&dec->out_layout, out_channels);
 
