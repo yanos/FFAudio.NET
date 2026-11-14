@@ -338,31 +338,38 @@ static int jpeg_size(const uint8_t *d, int n, int *w, int *h)
         return 0;
 
     int i = 2;
-    while (i + 3 < n) {
+    while (n - i >= 2) {
         if (d[i] != 0xFF) {
             i++;
             continue;
         }
         uint8_t marker = d[i + 1];
-        if (marker == 0xFF)
+        if (marker == 0xFF) {
+            i++;
             continue;
+        }
+        // Dimensions must precede the scan data and end-of-image marker.
+        if (marker == 0xDA || marker == 0xD9)
+            return 0;
         if (marker == 0xD8 || marker == 0x01 || (marker >= 0xD0 && marker <= 0xD7)) {
             i += 2;
             continue;
         }
 
+        if (n - i < 4)
+            return 0;
         int len = (d[i + 2] << 8) | d[i + 3];
+        if (len < 2 || len > n - i - 2)
+            return 0;
         // DHT, JPG, and DAC share the marker range but are not frame headers.
         if (marker >= 0xC0 && marker <= 0xCF
             && marker != 0xC4 && marker != 0xC8 && marker != 0xCC) {
-            if (i + 9 >= n)
+            if (len < 8)
                 return 0;
             *h = (d[i + 5] << 8) | d[i + 6];
             *w = (d[i + 7] << 8) | d[i + 8];
             return *w > 0 && *h > 0;
         }
-        if (len < 2)
-            return 0;
         i += 2 + len;
     }
     return 0;
