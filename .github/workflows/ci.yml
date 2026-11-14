@@ -11,6 +11,22 @@ permissions:
   contents: read
 
 jobs:
+  native-safety:
+    name: Native safety (ASan and UBSan)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install FFmpeg development libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libavformat-dev libavcodec-dev libavutil-dev libswresample-dev
+      - name: Build instrumented native tests
+        run: |
+          cmake -S native -B native/safety/build -DCMAKE_BUILD_TYPE=Debug -DFFAUDIO_BUILD_TESTS=ON -DFFAUDIO_ASAN=ON -DFFAUDIO_UBSAN=ON
+          cmake --build native/safety/build --parallel
+      - name: Run native safety regressions
+        run: ctest --test-dir native/safety/build --output-on-failure
+
   # Build and exercise each platform-specific native artifact.
   test:
     name: Build and test (${{ matrix.name }})
@@ -406,7 +422,7 @@ jobs:
   # Publish tested package bytes only after all package checks pass on a v* tag.
   publish:
     name: Publish to NuGet
-    needs: [pack, package]
+    needs: [pack, package, native-safety]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
 
