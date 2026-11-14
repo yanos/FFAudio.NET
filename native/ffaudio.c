@@ -382,9 +382,13 @@ static int png_size(const uint8_t *d, int n, int *w, int *h)
     if (n < 24 || memcmp(d, sig, sizeof(sig)) != 0 || memcmp(d + 12, "IHDR", 4) != 0)
         return 0;
 
-    *w = (d[16] << 24) | (d[17] << 16) | (d[18] << 8) | d[19];
-    *h = (d[20] << 24) | (d[21] << 16) | (d[22] << 8) | d[23];
-    return *w > 0 && *h > 0;
+    uint32_t width = (uint32_t)d[16] << 24 | (uint32_t)d[17] << 16 | (uint32_t)d[18] << 8 | d[19];
+    uint32_t height = (uint32_t)d[20] << 24 | (uint32_t)d[21] << 16 | (uint32_t)d[22] << 8 | d[23];
+    if (width == 0 || width > INT_MAX || height == 0 || height > INT_MAX)
+        return 0;
+    *w = (int)width;
+    *h = (int)height;
+    return 1;
 }
 
 // GIF and BMP dimensions are little-endian at fixed offsets.
