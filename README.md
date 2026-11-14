@@ -82,6 +82,18 @@ option also has an environment variable, shown in the help (`--static` is
 
 Native outputs are written to `native/artifacts/<platform>/`.
 
+The iOS runtime checks use a Release NativeAOT simulator build in both CI
+stages (source and packed packages). On a Mac with the iOS workload and
+simulator installed, run:
+
+```sh
+tests/checks/FFAudio.Checks.iOS/run.sh
+tests/checks/FFAudio.Checks.iOS/run.sh --mono  # compare against Mono
+```
+
+Both commands accept a simulator name or UDID. Set `FFAUDIO_PACKAGE_VERSION`
+to check restored packages instead of the source tree.
+
 ## Decode a file
 
 `Read` fills the buffer with interleaved float32 samples by default and returns

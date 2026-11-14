@@ -54,7 +54,7 @@ jobs:
             artifact-path: native/artifacts/
           # Not macos-latest, whose image has Xcode 26 only: the iOS 27
           # workload needs Xcode 27, which the xcode-27 image carries.
-          - name: iOS Simulator
+          - name: iOS Simulator (NativeAOT)
             os: xcode-27
             platform: ios
             mobile: true
@@ -192,7 +192,7 @@ jobs:
         run: native/ios/build.sh
 
       # Build, install, launch, and report the simulator tally.
-      - name: Run the checks (iOS)
+      - name: Run the checks (iOS NativeAOT)
         if: matrix.platform == 'ios'
         run: tests/checks/FFAudio.Checks.iOS/run.sh
 
@@ -332,7 +332,7 @@ jobs:
             platform: windows
           # Not macos-latest, whose image has Xcode 26 only: the iOS 27
           # workload needs Xcode 27, which the xcode-27 image carries.
-          - name: iOS Simulator
+          - name: iOS Simulator (NativeAOT)
             os: xcode-27
             platform: ios
             mobile: true
@@ -396,7 +396,7 @@ jobs:
           FFAUDIO_REQUIRE_LGPL: 1
         run: dotnet run --project tests/checks/FFAudio.Checks.Desktop --configuration Release -p:FFAudioPackageVersion="$FFAUDIO_PACKAGE_VERSION"
 
-      - name: Test package
+      - name: Test package (iOS NativeAOT)
         if: matrix.platform == 'ios'
         run: tests/checks/FFAudio.Checks.iOS/run.sh
 

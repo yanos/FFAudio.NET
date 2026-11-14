@@ -17,9 +17,16 @@
     <ProvisioningType Condition="'$(RuntimeIdentifier)' == 'ios-arm64'">automatic</ProvisioningType>
     <ProvisioningType Condition="'$(RuntimeIdentifier)' != 'ios-arm64'">manual</ProvisioningType>
 
-    <!-- This minimal runner intentionally retains UIWindow instead of scenes. -->
-    <NoWarn>$(NoWarn);CA1422</NoWarn>
+    <!-- Keep PublishAot local to the app: passing it globally also enables it
+         on the shared net8.0/net10.0 libraries, which cannot AOT for an iOS RID. -->
+    <PublishAot Condition="'$(FFAudioNativeAot)' == 'true'">true</PublishAot>
   </PropertyGroup>
+
+  <!-- NativeAOT's lazy library lookup does not find embedded frameworks.
+       Link the ffaudio imports directly, as the Flower iOS runner does. -->
+  <ItemGroup Condition="'$(PublishAot)' == 'true'">
+    <DirectPInvoke Include="ffaudio" />
+  </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\FFAudio.Checks\FFAudio.Checks.csproj" />
