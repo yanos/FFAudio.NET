@@ -428,6 +428,21 @@ public class DecoderTests : IDisposable
         Assert.True(borrowed.CanRead);
     }
 
+    [Theory]
+    [InlineData("wav", true)]
+    [InlineData("wav", false)]
+    [InlineData("flac", true)]
+    [InlineData("flac", false)]
+    public void Format_hint_attempts_preserve_stream_ownership(string hint, bool ownsStream)
+    {
+        using var source = new MemoryStream(File.ReadAllBytes(HiResFixture()));
+
+        using (var decoder = Decoder.OpenStream(source, formatHint: hint, ownsStream: ownsStream))
+            Assert.True(decoder.Read(new byte[64]) > 0);
+
+        Assert.Equal(!ownsStream, source.CanRead);
+    }
+
     // Failed opens must dispose owned streams because no Decoder is returned.
     [Fact]
     public void A_failed_open_closes_a_stream_the_decoder_owns()
@@ -438,12 +453,14 @@ public class DecoderTests : IDisposable
         Assert.False(owned.CanRead);
     }
 
-    [Fact]
-    public void A_failed_format_initialization_closes_an_owned_stream()
+    [Theory]
+    [InlineData(null)]
+    [InlineData("wav")]
+    public void A_failed_format_initialization_closes_an_owned_stream(string? hint)
     {
         var source = new MemoryStream(InvalidDurationWav());
 
-        var error = Record.Exception(() => Decoder.OpenStream(source, ownsStream: true));
+        var error = Record.Exception(() => Decoder.OpenStream(source, formatHint: hint, ownsStream: true));
 
         Assert.True(error is OverflowException or ArgumentOutOfRangeException, $"Unexpected error: {error}");
         Assert.False(source.CanRead);

@@ -55,17 +55,17 @@ namespace FFAudio
     {
         private IntPtr _handle;
         private readonly Stream? _stream;
-        private readonly bool _ownsStream;
+        // Ownership transfers only after an open/probe attempt succeeds.
+        private bool _ownsStream;
         // Lets static, AOT-compatible callbacks recover their managed state.
         private GCHandle _self;
 
         public AudioFormat Format { get; }
 
-        private Decoder(IntPtr handle, Stream? stream, bool ownsStream, GCHandle self)
+        private Decoder(IntPtr handle, Stream? stream, GCHandle self)
         {
             _handle = handle;
             _stream = stream;
-            _ownsStream = ownsStream;
             _self = self;
 
             try
@@ -145,7 +145,7 @@ namespace FFAudio
             if (rc != Native.Ok)
                 throw new DecodeException($"Could not open {path}", rc);
 
-            return new Decoder(handle, stream: null, ownsStream: false, default);
+            return new Decoder(handle, stream: null, default);
         }
 
         // formatHint is an FFmpeg demuxer name (for example, "mp4"). A rejected
@@ -158,34 +158,47 @@ namespace FFAudio
             ArgumentNullException.ThrowIfNull(stream);
             EnsureAbi();
 
-            if (formatHint is { Length: > 0 } && stream.CanSeek)
+            try
             {
-                try
+                Decoder decoder;
+                if (formatHint is { Length: > 0 } && stream.CanSeek)
                 {
-                    // Preserve the stream for a possible probing attempt.
-                    return OpenStreamAs(stream, format, sampleRate, channels, formatHint, ownsStream: false);
-                }
-                catch (DecodeException rejected)
-                {
-                    // Surface bad catalog metadata even though probing may recover.
-                    logger?.LogWarning(
-                        rejected,
-                        "The {Hint} demuxer would not open this stream; probing for the real container instead",
-                        formatHint);
+                    try
+                    {
+                        decoder = OpenStreamAs(stream, format, sampleRate, channels, formatHint);
+                    }
+                    catch (DecodeException rejected)
+                    {
+                        // Surface bad catalog metadata even though probing may recover.
+                        logger?.LogWarning(
+                            rejected,
+                            "The {Hint} demuxer would not open this stream; probing for the real container instead",
+                            formatHint);
 
-                    // The rejected demuxer may have consumed input.
-                    stream.Seek(0, SeekOrigin.Begin);
+                        // The rejected demuxer may have consumed input.
+                        stream.Seek(0, SeekOrigin.Begin);
+                        decoder = OpenStreamAs(stream, format, sampleRate, channels, formatHint: null);
+                    }
                 }
+                else
+                    decoder = OpenStreamAs(stream, format, sampleRate, channels, formatHint);
 
-                return OpenStreamAs(stream, format, sampleRate, channels, formatHint: null, ownsStream);
+                // Failed attempts borrow the stream so fallback remains possible.
+                // The successful decoder assumes the requested ownership once.
+                decoder._ownsStream = ownsStream;
+                return decoder;
             }
-
-            return OpenStreamAs(stream, format, sampleRate, channels, formatHint, ownsStream);
+            catch
+            {
+                if (ownsStream)
+                    stream.Dispose();
+                throw;
+            }
         }
 
         private static Decoder OpenStreamAs(Stream stream, SampleFormat format,
                                                   int sampleRate, int channels,
-                                                  string? formatHint, bool ownsStream)
+                                                  string? formatHint)
         {
             var state = new StreamState(stream);
             var self = GCHandle.Alloc(state);
@@ -199,25 +212,33 @@ namespace FFAudio
                 size = -1;
             }
 
-            var rc = Native.OpenIo(
-                GCHandle.ToIntPtr(self),
-                (IntPtr)(delegate* unmanaged[Cdecl]<IntPtr, byte*, int, int>)&ReadTrampoline,
-                (IntPtr)(delegate* unmanaged[Cdecl]<IntPtr, long, int, long>)&SeekTrampoline,
-                size,
-                stream.CanSeek ? 1 : 0,
-                formatHint,
-                (int)format, sampleRate, channels,
-                out var handle);
+            int rc;
+            IntPtr handle;
+            try
+            {
+                rc = Native.OpenIo(
+                    GCHandle.ToIntPtr(self),
+                    (IntPtr)(delegate* unmanaged[Cdecl]<IntPtr, byte*, int, int>)&ReadTrampoline,
+                    (IntPtr)(delegate* unmanaged[Cdecl]<IntPtr, long, int, long>)&SeekTrampoline,
+                    size,
+                    stream.CanSeek ? 1 : 0,
+                    formatHint,
+                    (int)format, sampleRate, channels,
+                    out handle);
+            }
+            catch
+            {
+                self.Free();
+                throw;
+            }
 
             if (rc != Native.Ok)
             {
                 self.Free();
-                if (ownsStream)
-                    stream.Dispose();
                 throw new DecodeException("Could not open the audio stream", rc);
             }
 
-            return new Decoder(handle, stream, ownsStream, self);
+            return new Decoder(handle, stream, self);
         }
 
         // Returns decoded bytes, or zero only at end of stream.
