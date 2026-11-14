@@ -59,6 +59,9 @@ typedef struct {
 
 typedef struct ffaudio_decoder ffaudio_decoder;
 
+// C callers must serialize calls using the same decoder, including close.
+// The managed Decoder API provides this synchronization internally.
+
 // A requested sample rate or channel count of zero preserves the source value.
 FFAUDIO_API int ffaudio_decoder_open_path(const char *path,
                                         int32_t requested_format,

@@ -189,6 +189,11 @@ TimeSpan landed = decoder.Seek(TimeSpan.FromMinutes(2));
 
 ## Handle errors
 
+Calls on one managed `Decoder` are serialized, including disposal. `Dispose`
+waits for an active operation to finish, so custom streams should bound how
+long reads can block. A stream callback that reenters the same decoder raises
+`InvalidOperationException`.
+
 Files that change channel layout, sample format, or sample rate midstream
 raise `DecodeException` when the change is reached.
 

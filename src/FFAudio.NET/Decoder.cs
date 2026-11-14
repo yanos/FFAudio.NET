@@ -50,9 +50,12 @@ namespace FFAudio
         public int Code { get; } = code;
     }
 
-    // A decoder for a path or managed Stream. Instances are not thread-safe.
+    // Operations on one decoder are serialized. Stream callbacks must not
+    // reenter the same decoder.
     public sealed unsafe class Decoder : IDisposable
     {
+        private readonly object _gate = new();
+        private bool _operationInProgress;
         private IntPtr _handle;
         private readonly Stream? _stream;
         // Ownership transfers only after an open/probe attempt succeeds.
@@ -244,7 +247,7 @@ namespace FFAudio
         // Returns decoded bytes, or zero only at end of stream.
         public int Read(Span<byte> buffer)
         {
-            ObjectDisposedException.ThrowIf(_handle == IntPtr.Zero, this);
+            using var operation = EnterNativeOperation();
             if (buffer.IsEmpty)
                 return 0;
 
@@ -262,7 +265,7 @@ namespace FFAudio
         // Returns the actual resume position, which may precede the request.
         public TimeSpan Seek(TimeSpan position)
         {
-            ObjectDisposedException.ThrowIf(_handle == IntPtr.Zero, this);
+            using var operation = EnterNativeOperation();
 
             var requestedMs = (long)Math.Max(0, position.TotalMilliseconds);
             var rc = Native.Seek(_handle, requestedMs, out var landedMs);
@@ -273,13 +276,20 @@ namespace FFAudio
         }
 
         // Loaded lazily to avoid metadata work for decode-only callers.
-        public IReadOnlyList<KeyValuePair<string, string>> Tags => _tags ??= ReadTags();
+        public IReadOnlyList<KeyValuePair<string, string>> Tags
+        {
+            get
+            {
+                lock (_gate)
+                    return _tags ??= ReadTags();
+            }
+        }
 
         private IReadOnlyList<KeyValuePair<string, string>>? _tags;
 
         private IReadOnlyList<KeyValuePair<string, string>> ReadTags()
         {
-            ObjectDisposedException.ThrowIf(_handle == IntPtr.Zero, this);
+            using var operation = EnterNativeOperation();
 
             var rc = Native.TagCount(_handle, out var count);
             if (rc != Native.Ok)
@@ -301,7 +311,7 @@ namespace FFAudio
         // Returns null when absent. This is a method because it copies the full image.
         public CoverArt? TryReadCoverArt()
         {
-            ObjectDisposedException.ThrowIf(_handle == IntPtr.Zero, this);
+            using var operation = EnterNativeOperation();
 
             var mime = new byte[256];
             int rc;
@@ -332,16 +342,64 @@ namespace FFAudio
 
         public void Dispose()
         {
-            var handle = Interlocked.Exchange(ref _handle, IntPtr.Zero);
-            if (handle != IntPtr.Zero)
-                Native.Close(handle);
+            lock (_gate)
+            {
+                if (_handle == IntPtr.Zero)
+                    return;
+                ThrowIfReentrant();
+                _operationInProgress = true;
+                try
+                {
+                    var handle = _handle;
+                    _handle = IntPtr.Zero;
+                    Native.Close(handle);
 
-            // Keep callback state alive until the native decoder is closed.
-            if (_self.IsAllocated)
-                _self.Free();
+                    // Keep callback state alive until the native decoder is closed.
+                    if (_self.IsAllocated)
+                        _self.Free();
 
-            if (_ownsStream)
-                _stream?.Dispose();
+                    if (_ownsStream)
+                        _stream?.Dispose();
+                }
+                finally
+                {
+                    _operationInProgress = false;
+                }
+            }
+        }
+
+        private NativeOperation EnterNativeOperation()
+        {
+            Monitor.Enter(_gate);
+            try
+            {
+                ObjectDisposedException.ThrowIf(_handle == IntPtr.Zero, this);
+                ThrowIfReentrant();
+                _operationInProgress = true;
+                return new NativeOperation(this);
+            }
+            catch
+            {
+                Monitor.Exit(_gate);
+                throw;
+            }
+        }
+
+        private void ThrowIfReentrant()
+        {
+            // Monitor locks are reentrant. A custom Stream must not call back
+            // into FFmpeg or free it while its native operation is on the stack.
+            if (_operationInProgress)
+                throw new InvalidOperationException("Stream callbacks cannot reenter the same decoder.");
+        }
+
+        private readonly struct NativeOperation(Decoder decoder) : IDisposable
+        {
+            public void Dispose()
+            {
+                decoder._operationInProgress = false;
+                Monitor.Exit(decoder._gate);
+            }
         }
 
         private sealed class StreamState(Stream stream)
