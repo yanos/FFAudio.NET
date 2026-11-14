@@ -407,11 +407,16 @@ static int bmp_size(const uint8_t *d, int n, int *w, int *h)
     if (n < 26 || d[0] != 'B' || d[1] != 'M')
         return 0;
 
-    *w = (int)((uint32_t)d[18] | ((uint32_t)d[19] << 8) | ((uint32_t)d[20] << 16) | ((uint32_t)d[21] << 24));
-    int height = (int)((uint32_t)d[22] | ((uint32_t)d[23] << 8) | ((uint32_t)d[24] << 16) | ((uint32_t)d[25] << 24));
+    uint32_t width = read_le32(d + 18);
+    uint32_t height = read_le32(d + 22);
     // Negative BMP heights indicate top-down row order.
-    *h = height < 0 ? -height : height;
-    return *w > 0 && *h > 0;
+    if (height & 0x80000000u)
+        height = 0u - height;
+    if (width == 0 || width > INT_MAX || height == 0 || height > INT_MAX)
+        return 0;
+    *w = (int)width;
+    *h = (int)height;
+    return 1;
 }
 
 static void size_attached_pictures(AVFormatContext *fmt)
