@@ -189,6 +189,9 @@ TimeSpan landed = decoder.Seek(TimeSpan.FromMinutes(2));
 
 ## Handle errors
 
+Files that change channel layout, sample format, or sample rate midstream
+raise `DecodeException` when the change is reached.
+
 ```csharp
 if (!Decoder.IsAvailable)
 {

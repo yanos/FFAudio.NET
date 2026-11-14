@@ -83,6 +83,7 @@ FFAUDIO_API int ffaudio_decoder_get_format(ffaudio_decoder *decoder,
                                          ffaudio_decoder_format *out_format);
 
 // Writes up to buffer_bytes of interleaved PCM and reports the byte count.
+// Changes to the decoded input format return an error until a successful seek.
 FFAUDIO_API int ffaudio_decoder_read(ffaudio_decoder *decoder,
                                    uint8_t *buffer,
                                    int32_t buffer_bytes,

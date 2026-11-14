@@ -29,6 +29,13 @@ struct ffaudio_decoder {
     // Delivered layout after any requested mix.
     AVChannelLayout out_layout;
 
+    // Codec fields can change while decoding. Keep the resampler's input
+    // contract separately so every frame can be checked before reading it.
+    AVChannelLayout in_layout;
+    enum AVSampleFormat in_format;
+    int in_rate;
+    int input_changed;
+
     // S24 is produced as S32 by swresample, then packed on output.
     enum AVSampleFormat swr_format;
     int swr_bytes_per_frame;
@@ -146,6 +153,13 @@ static int ensure_buffers(ffaudio_decoder *dec, int frames)
 // Convert one decoded frame into an empty pending buffer.
 static int stage_frame(ffaudio_decoder *dec)
 {
+    if (dec->frame->format != dec->in_format
+        || dec->frame->sample_rate != dec->in_rate
+        || av_channel_layout_compare(&dec->frame->ch_layout, &dec->in_layout) != 0) {
+        dec->input_changed = 1;
+        return AVERROR_INVALIDDATA;
+    }
+
     int max_out = (int)swr_get_out_samples(dec->swr, dec->frame->nb_samples);
     if (max_out < 0)
         return max_out;
@@ -161,9 +175,9 @@ static int stage_frame(ffaudio_decoder *dec)
     if (converted < 0)
         return converted;
 
-    if (dec->requested_format == FFAUDIO_SAMPLE_S24)
+    if (converted > 0 && dec->requested_format == FFAUDIO_SAMPLE_S24)
         pack_s24(dec->scratch, dec->pending, converted * dec->format.channels);
-    else
+    else if (converted > 0)
         memcpy(dec->pending, dec->scratch, (size_t)converted * dec->out_bytes_per_frame);
 
     dec->pending_bytes = converted * dec->out_bytes_per_frame;
@@ -279,6 +293,8 @@ static int is_trailing_ape_tag(ffaudio_decoder *dec)
 // Feed packets until one decoded frame is staged.
 static int stage_next(ffaudio_decoder *dec)
 {
+    if (dec->input_changed)
+        return AVERROR_INVALIDDATA;
     if (dec->finished)
         return FFAUDIO_EOF;
 
@@ -487,11 +503,16 @@ static int finish_open(ffaudio_decoder *dec)
     if (out_channels <= 0 || out_channels > INT_MAX / 4)
         return FFAUDIO_ERR_ARGUMENT;
 
+    rc = av_channel_layout_copy(&dec->in_layout, &dec->codec->ch_layout);
+    if (rc < 0)
+        return rc;
+    dec->in_format = dec->codec->sample_fmt;
+    dec->in_rate = source_rate;
     av_channel_layout_default(&dec->out_layout, out_channels);
 
     rc = swr_alloc_set_opts2(&dec->swr,
                              &dec->out_layout, dec->swr_format, out_rate,
-                             &dec->codec->ch_layout, dec->codec->sample_fmt, source_rate,
+                             &dec->in_layout, dec->in_format, dec->in_rate,
                              0, NULL);
     if (rc < 0)
         return rc;
@@ -757,20 +778,20 @@ FFAUDIO_API int ffaudio_decoder_seek(ffaudio_decoder *decoder, int64_t position_
     decoder->last_frame_ms = position_ms;
 
     // Rebuild swresample to discard delayed samples from before the seek.
-    swr_free(&decoder->swr);
-    AVChannelLayout out_layout;
-    av_channel_layout_default(&out_layout, decoder->format.channels);
-    rc = swr_alloc_set_opts2(&decoder->swr,
-                             &out_layout, decoder->swr_format, decoder->format.sample_rate,
-                             &decoder->codec->ch_layout, decoder->codec->sample_fmt,
-                             decoder->format.source_sample_rate,
+    SwrContext *swr = NULL;
+    rc = swr_alloc_set_opts2(&swr,
+                             &decoder->out_layout, decoder->swr_format, decoder->format.sample_rate,
+                             &decoder->in_layout, decoder->in_format, decoder->in_rate,
                              0, NULL);
-    av_channel_layout_uninit(&out_layout);
-    if (rc < 0)
+    if (rc >= 0)
+        rc = swr_init(swr);
+    if (rc < 0) {
+        swr_free(&swr);
         return rc;
-    rc = swr_init(decoder->swr);
-    if (rc < 0)
-        return rc;
+    }
+    swr_free(&decoder->swr);
+    decoder->swr = swr;
+    decoder->input_changed = 0;
 
     // Decode one frame to determine the demuxer's actual landing position.
     rc = stage_next(decoder);
@@ -803,6 +824,7 @@ FFAUDIO_API void ffaudio_decoder_close(ffaudio_decoder *decoder)
         avio_context_free(&decoder->avio);
     }
     av_channel_layout_uninit(&decoder->out_layout);
+    av_channel_layout_uninit(&decoder->in_layout);
     av_freep(&decoder->scratch);
     av_freep(&decoder->pending);
     av_free(decoder);
